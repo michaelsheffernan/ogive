@@ -1,0 +1,9 @@
+# Line endings: LF in the repo and the working copy.
+* text=auto eol=lf
+# PowerShell scripts keep Windows line endings.
+*.ps1 text eol=crlf
+# Binary: never diff or convert. An .ork is a zip.
+*.ork binary
+*.png binary
+*.jpg binary
+*.pdf binary

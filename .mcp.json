@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ogive": {
+      "command": ".venv/Scripts/python.exe",
+      "args": ["-m", "ogive.server"],
+      "env": { "PYTHONUTF8": "1" }
+    }
+  }
+}

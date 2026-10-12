@@ -1,0 +1,16 @@
+# Runtime environment for the Ogive Claude Desktop bundle (server.type = "uv").
+# Claude Desktop runs `uv run`, which installs these into a private venv. Ogive's own code
+# ships in src/ogive (copied in by scripts/build_mcpb.py), so it is not installed as a package.
+[project]
+name = "ogive-mcpb"
+version = "0.1.0"
+description = "Ogive MCP server bundle for Claude Desktop"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+dependencies = [
+    "mcp>=2.3,<3",
+    "jpype1>=1.7",
+]
+
+[tool.uv]
+package = false

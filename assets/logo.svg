@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Ogive">
+  <defs><clipPath id="tile"><rect width="512" height="512" rx="96"/></clipPath></defs>
+  <rect width="512" height="512" rx="96" fill="#14181f"/>
+  <g clip-path="url(#tile)" fill="none">
+    <circle cx="72.250" cy="322.500" r="253.750" stroke="#f2efe6" stroke-opacity="0.32" stroke-width="2" stroke-dasharray="5 7"/>
+    <line x1="72.250" y1="322.500" x2="256.000" y2="147.500" stroke="#f2efe6" stroke-opacity="0.45" stroke-width="2"/>
+    <path d="M65.250,322.500 H79.250 M72.250,315.500 V329.500" stroke="#f2efe6" stroke-opacity="0.6" stroke-width="2"/>
+    <line x1="256.000" y1="109.000" x2="256.000" y2="403.000" stroke="#f2efe6" stroke-opacity="0.55" stroke-width="2" stroke-dasharray="22 6 4 6"/>
+    <path d="M186.000,364.500 L186.000,322.500 A253.750,253.750 0 0 1 256.000,147.500 A253.750,253.750 0 0 1 326.000,322.500 L326.000,364.500" stroke="#f2efe6" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <circle cx="256.000" cy="147.500" r="9" fill="#f5b041"/>
+</svg>

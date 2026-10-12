@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ogive"
+dynamic = ["version"]
+description = "AI tools for OpenRocket that show their working."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/michaelsheffernan/ogive"
+Issues = "https://github.com/michaelsheffernan/ogive/issues"
+
+[project.scripts]
+ogive = "ogive.cli:main"
+ogive-mcp = "ogive.server.app:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=9", "ruff>=0.17"]
+openrocket = ["jpype1>=1.7"]  # OpenRocket backend; needs a local OpenRocket install
+mcp = ["mcp>=2.3,<3"]  # MCP server (ogive-mcp); clients bring the model
+
+[tool.setuptools.dynamic]
+version = { attr = "ogive.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"ogive.judge" = ["*.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["openrocket: needs a local OpenRocket install and jpype1 (skips without them)"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["reference", "design"]  # prototypes and mockup tooling
+
+[tool.ruff.lint]
+# E/W: style errors, F: real bugs (unused names, undefined names), I: import order,
+# B: common bug patterns, UP: modern Python syntax.
+select = ["E", "W", "F", "I", "B", "UP"]

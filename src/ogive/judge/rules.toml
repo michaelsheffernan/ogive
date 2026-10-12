@@ -1,0 +1,34 @@
+# Ogive judge rules. Advisory only: OpenRocket and RASAero II sign off on real flights.
+# Thresholds are data. Copy this file, edit it, and pass it with `ogive judge --rules my_rules.toml`.
+
+[stability]
+min_cal = 1.5      # FAIL below. Common minimum margin for hobby and student rockets.
+goal_cal = 2.0     # WARN below. Heloria's design goal.
+# Window: rod clearance to the ejection charge, while Mach > 0.1 (Lake 2 finding:
+# outside it, OpenRocket's stability trace is meaningless).
+window_min_mach = 0.1
+
+[launch]
+min_rod_velocity = 15.0   # m/s. FAIL below: fins need airspeed to steer off the rod. Rule of thumb, team can change.
+
+[flutter]
+min_margin = 1.5          # FAIL below: flutter speed / flight speed, worst moment of the ascent.
+# Fin shear modulus in GPa. ASSUMED until a datasheet or test gives the real value.
+# Woven 0/90 carbon: about 4-5 GPa in-plane shear. Quasi-isotropic carbon: about 17 GPa.
+# The verdict uses the LOWEST value (conservative); the detail shows every value.
+shear_modulus_gpa = [3.0, 5.0, 17.0]
+shear_modulus_source = "assumed"   # set to "datasheet" or "measured" once known
+
+[recovery]
+max_ground_hit = 10.0     # m/s. FAIL above. OpenRocket 24.12 reports TOTAL speed (conservative vs vertical).
+
+[motor]
+designation_tolerance = 0.05   # FAIL if the curve's impulse or average thrust is off its designation by more
+burn_time_tolerance_s = 0.10   # FAIL if a stored sim's implied burn (apogee time - optimum delay) is off I/F by more
+
+[stored]
+rerun_tolerance = 0.02    # FAIL if a stored summary differs from a fresh re-run by more (seed spread is <= 1 %)
+
+[confidence]
+min_fineness = 10.0       # WARN below: Barrowman stability is less trustworthy for short, fat rockets
+supersonic_mach = 1.0     # WARN above: OpenRocket's supersonic aerodynamics are limited; cross-check RASAero

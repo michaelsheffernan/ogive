@@ -1,0 +1,100 @@
+{
+  "manifest_version": "0.4",
+  "name": "ogive",
+  "display_name": "Ogive",
+  "version": "0.1.0",
+  "description": "Rocket design copilot over OpenRocket: judge every change, prove it by simulation.",
+  "long_description": "Ogive drives your local OpenRocket 24.12 headless. Read and edit .ork designs, fly their simulations, judge them against safety rules (stability through the ascent, rod speed, fin flutter, recovery, motor curve sanity, stale results) and compare versions. Every number carries its provenance: backend, seed and the file's sha256. Edits always write a new file. Advisory only: OpenRocket and RASAero II sign off on real flights. Needs OpenRocket 24.12 installed (Windows).",
+  "author": {
+    "name": "Heloria Labs"
+  },
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/michaelsheffernan/ogive",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/michaelsheffernan/ogive"
+  },
+  "support": "https://github.com/michaelsheffernan/ogive/issues",
+  "keywords": [
+    "rocketry",
+    "openrocket",
+    "simulation",
+    "aerospace"
+  ],
+  "server": {
+    "type": "uv",
+    "entry_point": "src/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "src/server.py"
+      ],
+      "env": {
+        "OPENROCKET_HOME": "${user_config.openrocket_home}",
+        "OGIVE_ROOT": "${user_config.workspace}",
+        "PYTHONUTF8": "1"
+      }
+    }
+  },
+  "user_config": {
+    "openrocket_home": {
+      "type": "directory",
+      "title": "OpenRocket folder",
+      "description": "Where OpenRocket 24.12 is installed (holds jar/ and jre/).",
+      "required": false,
+      "default": "C:\\Program Files\\OpenRocket"
+    },
+    "workspace": {
+      "type": "directory",
+      "title": "Rocket designs folder",
+      "description": "Ogive reads and writes .ork files only inside this folder.",
+      "required": true
+    }
+  },
+  "tools": [
+    {
+      "name": "inspect_design",
+      "description": "Components, editable fields, motors and stored sims of an .ork."
+    },
+    {
+      "name": "run_simulation",
+      "description": "Fly a simulation in OpenRocket; seeded, with optional time series."
+    },
+    {
+      "name": "static_stability",
+      "description": "CG, CP and calibers as OpenRocket's design view computes them."
+    },
+    {
+      "name": "judge_design",
+      "description": "Fly and apply the safety rules; every verdict names its source."
+    },
+    {
+      "name": "edit_design",
+      "description": "Change numeric fields; always saves a new file."
+    },
+    {
+      "name": "add_mass_component",
+      "description": "Add nose weight or ballast; always saves a new file."
+    },
+    {
+      "name": "compare_designs",
+      "description": "Field diff plus both designs judged on the same sim and seed."
+    },
+    {
+      "name": "optimize_fins_and_nose_weight",
+      "description": "Grid sweep, judged; lightest passing design and Pareto front."
+    }
+  ],
+  "prompts_generated": true,
+  "compatibility": {
+    "platforms": [
+      "win32"
+    ],
+    "runtimes": {
+      "python": ">=3.11"
+    }
+  }
+}

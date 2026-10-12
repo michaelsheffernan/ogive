@@ -1,0 +1,21 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+out/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.playwright-mcp/
+
+# JVM crash reports (OpenRocket via JPype)
+hs_err_pid*.log
+replay_pid*.log
+.playwright-mcp/
+packaging/mcpb/.venv/
+packaging/mcpb/uv.lock
+
+# Ogive edit outputs (MCP edit_design / optimizer write next to the design)
+data/ogive/
