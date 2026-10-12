@@ -5,14 +5,16 @@ Run: `ogive-mcp`, or `python -m ogive.server`. No API key, no LLM inside Ogive.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 import anyio.to_thread
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
+from mcp.types import Icon, ToolAnnotations
 
 from ogive import __version__
 from ogive.judge import load_rules
@@ -35,6 +37,17 @@ Units are SI as stored in the file: m, kg, s, rad. Positions are from the nose t
 Paths: relative paths are inside the user's designs folder (OGIVE_ROOT) when one is set.
 The first OpenRocket call in a session takes about 10 s (Java start); later ones about 1 s.
 """
+
+# Ogive's mark, shown by hosts that display server and tool icons (MCP 2025-11-25 `icons`).
+# Embedded as a data URI so it works offline and inside the Claude Desktop bundle.
+_ICON_PNG = (Path(__file__).with_name("icon-64.png")).read_bytes()
+ICONS = [
+    Icon(
+        src="data:image/png;base64," + base64.b64encode(_ICON_PNG).decode("ascii"),
+        mime_type="image/png",
+        sizes=["64x64"],
+    )
+]
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITES_NEW_FILE = ToolAnnotations(
@@ -61,10 +74,11 @@ server = MCPServer(
     description="Rocket design copilot over OpenRocket: judge, provenance, optimizer.",
     instructions=INSTRUCTIONS,
     version=__version__,
+    icons=ICONS,
 )
 
 
-@server.tool(annotations=READ_ONLY)
+@server.tool(annotations=READ_ONLY, icons=ICONS)
 def inspect_design(file: str) -> dict[str, Any]:
     """Read an .ork design: every component with its numeric fields (SI units, editable with
     edit_design), material, Ogive's mass estimate, the motors (with thrust-curve digest) and
@@ -73,7 +87,7 @@ def inspect_design(file: str) -> dict[str, Any]:
         return tools.inspect_design(file)
 
 
-@server.tool(annotations=READ_ONLY)
+@server.tool(annotations=READ_ONLY, icons=ICONS)
 def run_simulation(
     file: str,
     simulation: str | None = None,
@@ -88,7 +102,7 @@ def run_simulation(
         return tools.run_simulation(file, simulation, seed, series or (), max_points)
 
 
-@server.tool(annotations=READ_ONLY)
+@server.tool(annotations=READ_ONLY, icons=ICONS)
 def static_stability(file: str, mach: float = 0.3) -> dict[str, Any]:
     """CG, CP and stability in calibers exactly as OpenRocket's design view computes them, plus
     the burnout-CG stability (the one that matters at max velocity) and OpenRocket's masses."""
@@ -96,7 +110,7 @@ def static_stability(file: str, mach: float = 0.3) -> dict[str, Any]:
         return tools.static_stability(file, mach)
 
 
-@server.tool(annotations=READ_ONLY)
+@server.tool(annotations=READ_ONLY, icons=ICONS)
 def judge_design(
     file: str, simulation: str | None = None, seed: int = 0, rules: str | None = None
 ) -> dict[str, Any]:
@@ -109,7 +123,7 @@ def judge_design(
         return tools.judge_design(file, simulation, seed, rules)
 
 
-@server.tool(annotations=WRITES_NEW_FILE)
+@server.tool(annotations=WRITES_NEW_FILE, icons=ICONS)
 def edit_design(
     file: str, changes: list[dict[str, Any]], output: str | None = None
 ) -> dict[str, Any]:
@@ -121,7 +135,7 @@ def edit_design(
         return tools.edit_design(file, changes, output)
 
 
-@server.tool(annotations=WRITES_NEW_FILE)
+@server.tool(annotations=WRITES_NEW_FILE, icons=ICONS)
 def add_mass_component(
     file: str,
     parent: str,
@@ -141,7 +155,7 @@ def add_mass_component(
         )
 
 
-@server.tool(annotations=READ_ONLY)
+@server.tool(annotations=READ_ONLY, icons=ICONS)
 def compare_designs(
     base: str,
     candidate: str,
@@ -156,7 +170,7 @@ def compare_designs(
         return tools.compare_designs(base, candidate, simulation, seed, rules)
 
 
-@server.tool(annotations=WRITES_NEW_FILE)
+@server.tool(annotations=WRITES_NEW_FILE, icons=ICONS)
 async def optimize_fins_and_nose_weight(
     file: str,
     ctx: Context,

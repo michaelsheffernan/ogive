@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2 (2026-10-12)
+
+**Added**: an icon. The Claude Desktop bundle declares it (`icon` plus 512, 256 and 64 px `icons` in the
+manifest), and the MCP server sends it as its own icon and on every tool (the `icons` field from the MCP
+2025-11-25 spec), embedded as a data URI so it works offline. It's the logo mark on a navy tile with transparent
+corners, bold enough to read at 16 px on light and dark themes. `scripts/make_logo.py` draws it from the same
+tangent-ogive geometry as the logo.
+
 ## 0.1.1 (2026-10-12)
 
 Tested for real: installed in Claude Desktop from the `.mcpb`, and used `inspect_design`, `edit_design` and

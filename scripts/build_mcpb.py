@@ -42,6 +42,8 @@ def main() -> int:
     shutil.copytree(PACKAGING, STAGE, ignore=ignore)
     shutil.copytree(REPO / "src" / "ogive", STAGE / "src" / "ogive", ignore=ignore)
     shutil.copy2(REPO / "LICENSE", STAGE / "LICENSE")
+    for icon in ("icon.png", "icon-256.png", "icon-64.png"):  # manifest "icon" / "icons"
+        shutil.copy2(REPO / "assets" / icon, STAGE / icon)
 
     npx = shutil.which("npx") or _installed_npx()
     if npx is None:

@@ -33,6 +33,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "ogive.judge" = ["*.toml"]
+"ogive.server" = ["*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -300,3 +300,12 @@ def test_relative_path_over_mcp_like_claude_desktop(design, tmp_path, monkeypatc
     result = mcp_call(inspect)
     assert not result.is_error, result.content[0].text
     assert result.structured_content["provenance"]["sha256"] == sha(design)
+
+
+def test_server_and_every_tool_carry_the_icon():
+    async def info(client):
+        return client.session.server_info, (await client.list_tools()).tools
+
+    server_info, listed = mcp_call(info)
+    assert server_info.icons and server_info.icons[0].src.startswith("data:image/png;base64,")
+    assert all(t.icons and t.icons[0].mime_type == "image/png" for t in listed)

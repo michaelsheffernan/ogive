@@ -121,6 +121,27 @@ def mark(ink: str, paper: str) -> str:
     return svg(512, parts)
 
 
+def app_icon() -> str:
+    """512 app icon (Claude Desktop extension list, MCP icons): the mark, bolder for 16-64 px.
+
+    Navy tile with transparent corners, so it reads on light and dark themes alike.
+    """
+    r = 100.0
+    leg = 0.5 * r
+    length = LENGTH_RATIO * r
+    o = Ogive(256.0, 256.0 + (length + leg) / 2 - leg, r, length)
+    check(o)
+    axis_top, axis_bottom = o.tip_y - 0.32 * r, o.base_y + leg + 0.32 * r
+    parts = [
+        f'<rect width="512" height="512" rx="112" fill="{NAVY}"/>',
+        f'<line x1="{o.cx:.3f}" y1="{axis_top:.3f}" x2="{o.cx:.3f}" y2="{axis_bottom:.3f}" '
+        f'stroke="{PAPER}" stroke-opacity="0.45" stroke-width="8"/>',
+        f'<path d="{o.path(leg)}" fill="none" stroke="{PAPER}" stroke-width="40" '
+        'stroke-linecap="round" stroke-linejoin="round"/>',
+    ]
+    return svg(512, parts)
+
+
 def favicon(size_hint: int = 32) -> str:
     """32 tile: open ogive only, thick stroke. size_hint 16 draws a bigger, bolder one for 16 px.
 
@@ -265,6 +286,14 @@ def main() -> int:
     print("wrote assets/favicon.ico (16, 32)")
     (ASSETS / "social-preview.png").write_bytes(render(social_preview(), 1280, chrome, 640))
     print("wrote assets/social-preview.png (1280 x 640, for GitHub's repo settings)")
+    master = Image.open(io.BytesIO(render(app_icon(), 512, chrome))).convert("RGBA")
+    for size in (512, 256, 64):
+        name = "icon.png" if size == 512 else f"icon-{size}.png"
+        master.resize((size, size), Image.Resampling.LANCZOS).save(ASSETS / name, optimize=True)
+        print(f"wrote assets/{name} ({size} x {size}, transparent corners)")
+    # The MCP server embeds the small icon (server and tool icons), so it ships inside the package.
+    shutil.copy2(ASSETS / "icon-64.png", REPO / "src" / "ogive" / "server" / "icon-64.png")
+    print("copied assets/icon-64.png -> src/ogive/server/icon-64.png")
 
     PREVIEW.mkdir(parents=True, exist_ok=True)
     for name, text in files.items():
