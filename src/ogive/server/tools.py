@@ -53,9 +53,23 @@ class ToolError(ValueError):
 # --- paths and provenance ---------------------------------------------------------------
 
 
+def user_path(text: str) -> Path:
+    """A path from the client. Relative paths resolve inside OGIVE_ROOT when it is set.
+
+    MCP clients start the server in a folder of their choosing (Claude Desktop: the bundle's own
+    folder), so "rocket.ork" must mean the designs folder, not the server's working directory.
+    Absolute paths are kept. Either way the result must stay inside OGIVE_ROOT.
+    """
+    path = Path(text).expanduser()
+    root = os.environ.get(ROOT_ENV)
+    if root and not path.is_absolute():
+        path = Path(root) / path
+    return _inside_root(path)
+
+
 def design_path(file: str) -> Path:
     """An existing .ork file, inside OGIVE_ROOT when that is set."""
-    path = _inside_root(Path(file).expanduser())
+    path = user_path(file)
     if path.suffix.lower() != ".ork":
         raise ToolError(f"{path.name} is not an .ork file")
     if not path.is_file():
@@ -66,7 +80,7 @@ def design_path(file: str) -> Path:
 def new_output_path(output: str | None, source: Path) -> Path:
     """Where to write a new design. Default: SOURCE_DIR/ogive/STEM-001.ork, first free number."""
     if output:
-        path = _inside_root(Path(output).expanduser())
+        path = user_path(output)
     else:
         folder = source.parent / "ogive"
         n = 1
@@ -241,7 +255,7 @@ def judge_design(
 def design_rules_path(rules: str | None) -> Path | None:
     if rules is None:
         return None
-    path = _inside_root(Path(rules).expanduser())
+    path = user_path(rules)
     if path.suffix.lower() != ".toml" or not path.is_file():
         raise ToolError(f"rules must be an existing .toml file: {path}")
     return path
@@ -477,7 +491,9 @@ def optimize_plan(
         raise ToolError(
             f"the optimizer needs exactly one trapezoidal fin set; found {len(finsets)}"
         )
-    folder = _inside_root(Path(out_dir) if out_dir else path.parent / "ogive" / f"opt-{path.stem}")
+    folder = (
+        user_path(out_dir) if out_dir else _inside_root(path.parent / "ogive" / f"opt-{path.stem}")
+    )
     foreign = (
         sorted(p.name for p in folder.iterdir() if p.name not in SWEEP_OUTPUTS)
         if (folder.is_dir())

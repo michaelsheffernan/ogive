@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+from pathlib import Path
 
 import pytest
 from mcp import Client
@@ -254,3 +255,48 @@ def test_desktop_bundle_manifest_matches_the_server():
     assert manifest["server"]["type"] == "uv"
     assert any(d.startswith("mcp") for d in bundle["dependencies"])
     assert any(d.startswith("jpype1") for d in bundle["dependencies"])
+
+
+# --- relative paths (Claude Desktop starts the server in the bundle's folder) ---------------
+
+
+def test_relative_paths_resolve_inside_ogive_root(design, tmp_path, monkeypatch):
+    elsewhere = tmp_path / "server-cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv(tools.ROOT_ENV, str(design.parent))
+    assert tools.design_path("v2.ork") == design.resolve()
+    record = tools.edit_design(
+        "v2.ork", [{"component": FINS, "field": "height", "value": 0.034}], "variants/v2-34.ork"
+    )
+    assert Path(record["output"]) == (design.parent / "variants" / "v2-34.ork").resolve()
+    assert Path(record["output"]).is_file()
+    assert not (elsewhere / "variants").exists()
+
+
+def test_relative_paths_cannot_escape_ogive_root(design, monkeypatch):
+    monkeypatch.setenv(tools.ROOT_ENV, str(design.parent))
+    with pytest.raises(tools.ToolError, match="outside OGIVE_ROOT"):
+        tools.design_path("../v2.ork")
+    with pytest.raises(tools.ToolError, match="outside OGIVE_ROOT"):
+        tools.new_output_path("../escaped.ork", design)
+
+
+def test_relative_paths_without_ogive_root_use_the_working_directory(design, monkeypatch):
+    monkeypatch.delenv(tools.ROOT_ENV, raising=False)
+    monkeypatch.chdir(design.parent)
+    assert tools.design_path("v2.ork") == design.resolve()
+
+
+def test_relative_path_over_mcp_like_claude_desktop(design, tmp_path, monkeypatch):
+    elsewhere = tmp_path / "bundle"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv(tools.ROOT_ENV, str(design.parent))
+
+    async def inspect(client):
+        return await client.call_tool("inspect_design", {"file": "v2.ork"})
+
+    result = mcp_call(inspect)
+    assert not result.is_error, result.content[0].text
+    assert result.structured_content["provenance"]["sha256"] == sha(design)

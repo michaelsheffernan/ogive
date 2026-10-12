@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.1 (2026-10-12)
+
+Tested for real: installed in Claude Desktop from the `.mcpb`, and used `inspect_design`, `edit_design` and
+`judge_design` from a Claude Desktop chat.
+
+**Fixed**: relative paths. Claude Desktop starts the server in the bundle's own folder, so `rocket.ork` was looked
+up there instead of in your designs folder. Relative paths now resolve inside `OGIVE_ROOT` when it's set, and still
+can't escape it. Covered by four new tests, two of which run the tools from a different working folder the way
+Claude Desktop does.
+
+**Changed**: the Claude Desktop bundle sets `UV_HTTP_TIMEOUT=300`, so the first install doesn't time out
+downloading `pydantic-core` on a slow connection.
+
+**Docs**: a Troubleshooting section, a Tested section and a worked example in the README. The README no longer
+describes one specific rocket.
+
+**Added**: the logo, favicon and social-preview image (`assets/`, drawn from real tangent-ogive geometry by
+`scripts/make_logo.py`). They first went public with the republished 0.1.0 tree.
+
 ## 0.1.0 (2026-10-11)
 
 First version meant for other people. Windows, OpenRocket 24.12.

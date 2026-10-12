@@ -32,6 +32,7 @@ Truth rules for anything you tell the user:
 - Ogive is advisory. OpenRocket and RASAero II sign off on real flights.
 
 Units are SI as stored in the file: m, kg, s, rad. Positions are from the nose tip.
+Paths: relative paths are inside the user's designs folder (OGIVE_ROOT) when one is set.
 The first OpenRocket call in a session takes about 10 s (Java start); later ones about 1 s.
 """
 
