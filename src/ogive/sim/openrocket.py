@@ -1,8 +1,11 @@
 """OpenRocket backend: OpenRocket's own Java core, driven from Python through JPype.
 
-One JVM per Python process (a JPype limit), started on first use. It uses the Java
-runtime bundled with the OpenRocket install, so no separate JDK is needed.
-Install location: $OPENROCKET_HOME, default C:\\Program Files\\OpenRocket.
+One JVM per Python process (a JPype limit), started on first use.
+
+Where OpenRocket is: $OPENROCKET_HOME, either an install folder or the OpenRocket-*.jar file
+itself. Unset or empty, Ogive looks in the usual install places for this OS (DEFAULT_HOMES).
+Which Java: the runtime bundled with the install if it has one (the Windows, macOS and Linux
+installers all ship one), else $JAVA_HOME, else JPype's default. OpenRocket 24.12 needs Java 17+.
 
 Lake 1 uses this to prove OpenRocket reads our files the way we do. Lake 2 adds sims.
 """
@@ -11,11 +14,20 @@ from __future__ import annotations
 
 import math
 import os
+import re
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_HOME = Path(r"C:\Program Files\OpenRocket")
+DEFAULT_HOMES = {
+    "win32": [Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "OpenRocket"],
+    "darwin": [Path("/Applications/OpenRocket.app"), Path.home() / "Applications/OpenRocket.app"],
+    "linux": [Path.home() / "OpenRocket", Path("/opt/OpenRocket"), Path("/opt/openrocket")],
+}
+# The JVM library inside a Java home, per OS layout.
+JVM_LIBRARIES = ("bin/server/jvm.dll", "lib/server/libjvm.so", "lib/server/libjvm.dylib")
+MIN_JAVA = 17  # OpenRocket 24.12's class files are Java 17
 
 # .ork field name -> OpenRocket getter, per OpenRocket component class.
 DIMENSION_GETTERS = {
@@ -84,14 +96,118 @@ class LoadedRocket:
 
 
 def find_install(home: str | Path | None = None) -> Install:
-    # An empty OPENROCKET_HOME (e.g. an unset Claude Desktop field) means the default.
-    home = Path(home or os.environ.get("OPENROCKET_HOME") or DEFAULT_HOME)
-    jars = sorted((home / "jar").glob("OpenRocket-*.jar"))
-    jvm = home / "jre" / "bin" / "server" / "jvm.dll"
-    if not jars or not jvm.exists():
-        raise OpenRocketUnavailable(f"no OpenRocket install with a bundled Java at {home}")
-    jar = jars[-1]
-    return Install(home, jar, jvm, jar.stem.removeprefix("OpenRocket-"))
+    """Find OpenRocket and a Java 17+ to run it, or say where it looked (OpenRocketUnavailable).
+
+    `home` (default $OPENROCKET_HOME) is an install folder or an OpenRocket-*.jar. Unset, empty, or
+    an unfilled Claude Desktop placeholder ("${user_config...}") means: search DEFAULT_HOMES.
+    """
+    given = str(home or os.environ.get("OPENROCKET_HOME") or "").strip()
+    if given.startswith("${"):
+        given = ""
+    if given:
+        candidates = [Path(given).expanduser()]
+    else:
+        candidates = DEFAULT_HOMES.get(sys.platform, DEFAULT_HOMES["linux"])
+    for candidate in candidates:
+        jar = _find_jar(candidate)
+        if jar is not None:
+            break
+    else:
+        looked = ", ".join(str(c) for c in candidates)
+        raise OpenRocketUnavailable(
+            f"no OpenRocket install or OpenRocket-*.jar at {looked}. Install OpenRocket 24.12, "
+            "or set OPENROCKET_HOME to its folder or to OpenRocket-24.12.jar"
+        )
+    # A bundled Java only counts inside an install folder: next to a loose jar (say in
+    # Downloads) any JDK found would be a stranger's.
+    jvm = (_search(candidate, _is_jvm_library) if candidate.is_dir() else None) or _system_jvm()
+    _check_java(jvm)
+    match = re.fullmatch(r"OpenRocket-(.+)\.jar", jar.name)
+    root = candidate if candidate.is_dir() else jar.parent
+    return Install(root, jar, jvm, match.group(1) if match else "unknown version")
+
+
+def _find_jar(path: Path) -> Path | None:
+    if path.is_file():
+        return path if path.suffix == ".jar" else None
+    if not path.is_dir():
+        return None
+    jars = sorted((path / "jar").glob("OpenRocket-*.jar"))  # Windows and Linux installers
+    if jars:
+        return jars[-1]
+    return _search(path, lambda p: re.fullmatch(r"OpenRocket-.+\.jar", p.name) is not None)
+
+
+def _search(root: Path, wanted, max_depth: int = 9) -> Path | None:
+    """First file under root (breadth first, sorted, at most max_depth folders down) that is wanted.
+
+    Bounded so a wrong OPENROCKET_HOME (a whole drive) fails fast instead of crawling it. Nine
+    covers the macOS app bundle, whose Java sits about eight folders down.
+    """
+    level = [root]
+    for _ in range(max_depth + 1):
+        below = []
+        for folder in level:
+            try:
+                entries = sorted(folder.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.is_dir() and not entry.is_symlink():
+                    below.append(entry)
+                elif wanted(entry):
+                    return entry
+        level = below
+    return None
+
+
+def _is_jvm_library(path: Path) -> bool:
+    return any(path.as_posix().endswith("/" + library) for library in JVM_LIBRARIES)
+
+
+def _system_jvm() -> Path:
+    java_home = os.environ.get("JAVA_HOME", "").strip()
+    if java_home:
+        for library in JVM_LIBRARIES:
+            if (Path(java_home) / library).is_file():
+                return Path(java_home) / library
+        raise OpenRocketUnavailable(f"JAVA_HOME is {java_home}, but there's no Java runtime in it")
+    try:
+        import jpype
+
+        return Path(jpype.getDefaultJVMPath())
+    except ImportError as error:
+        raise OpenRocketUnavailable("jpype1 missing: pip install -e .[openrocket]") from error
+    except Exception as error:  # JPype's JVMNotFoundException and friends
+        raise OpenRocketUnavailable(
+            f"this OpenRocket has no bundled Java, and no Java {MIN_JAVA}+ was found "
+            f"({error}). Install one (for example Temurin {MIN_JAVA}) or set JAVA_HOME"
+        ) from error
+
+
+def java_version(jvm: Path) -> str | None:
+    """JAVA_VERSION from the `release` file of the Java home that holds this JVM library."""
+    for folder in list(jvm.parents)[:4]:
+        release = folder / "release"
+        if release.is_file():
+            found = re.search(r'JAVA_VERSION="([^"]+)"', release.read_text(errors="replace"))
+            return found.group(1) if found else None
+    return None
+
+
+def _check_java(jvm: Path) -> None:
+    version = java_version(jvm)
+    if version is None:
+        return  # no release file: let the JVM start say if it's too old
+    found = re.match(r"(?:1\.)?(\d+)", version)  # "1.8.0_292" is Java 8, "17.0.20" is 17
+    if found is None:
+        return
+    major = int(found.group(1))
+    if major < MIN_JAVA:
+        raise OpenRocketUnavailable(
+            f"OpenRocket needs Java {MIN_JAVA} or newer; the Java at {jvm} is {version}. "
+            f"Install Java {MIN_JAVA}+ and set JAVA_HOME to it"
+        )
 
 
 _running: Install | None = None
@@ -138,7 +254,11 @@ def _start(home: str | Path | None) -> Install:
             convertStrings=True,
         )
     finally:
-        if faulthandler_was_on:
+        # Only Windows gets it back. On Linux and macOS the JVM uses SIGSEGV for its own work
+        # (null checks, safepoints); faulthandler would take that signal over and the first
+        # harmless fault would abort the process (seen on CI, 2026-11-01). Windows uses
+        # vectored exception handling instead of signals, so there it's safe.
+        if faulthandler_was_on and sys.platform == "win32":
             faulthandler.enable()
     # Java never writes to our stdout: the MCP stdio server owns it (stray bytes break the
     # protocol), and CLI output stays clean when redirected.

@@ -45,7 +45,9 @@ It doesn't sign off on flights. OpenRocket, RASAero II, your club and your RSO d
   screenshotted in the app itself.
 - On the reference design, the judge's numbers match OpenRocket 24.12 exactly. OpenRocket does the flying; Ogive
   only reads the result, and the tests pin it.
-- 220 automated tests, run on every push with Python 3.11 and 3.14.
+- Runs on Linux and macOS: on every push, CI downloads the released OpenRocket 24.12 jar (hash checked), runs it
+  on Java 17 on both, and passes every OpenRocket test there, the judge's exact numbers included.
+- 235 automated tests, run on every push with Python 3.11 and 3.14.
 
 ## An example
 
@@ -55,13 +57,13 @@ speed. Now I know what to measure before I trust either.
 
 ## What it can't do yet
 
-- Windows only.
+- Claude Desktop on a Mac, and OpenRocket's macOS and Linux installers: not tried yet. The jar route is (see Tested).
 - Needs OpenRocket 24.12. I haven't tried other versions.
 - The flutter check is a rough screen for a flat plate. It assumes a fin shear modulus of 3 GPa, on the safe side,
   until you give it a real one from a datasheet or a test.
 - Above Mach 1, OpenRocket's aerodynamics are approximate. Ogive warns you; cross-check in RASAero II.
 - One wind seed per run. No Monte Carlo yet.
-- It can change numbers and add masses. It can't swap motors or add parts yet.
+- It can change numbers, add masses and swap motors. It can't add other parts yet.
 - The optimizer only sweeps fin height and nose weight.
 - The first call takes about 10 s while Java starts. Then about 1 s each.
 
@@ -70,14 +72,25 @@ Found a security problem? See [SECURITY.md](SECURITY.md).
 
 ## Setup
 
-You need Windows 10 or 11 and [OpenRocket 24.12](https://openrocket.info/). Ogive uses OpenRocket's own engine and
-the Java that comes with it.
+You need [OpenRocket 24.12](https://openrocket.info/). Ogive uses OpenRocket's own engine.
 
-**Claude Desktop:** run `.\tasks.ps1 mcpb` (needs Node.js), open `out\ogive-0.1.1.mcpb` with Claude Desktop, and
-pick your rockets folder. Ogive only reads and writes inside it, and relative paths mean that folder.
-The first launch takes a minute or so while it installs Python packages.
+- **Windows**: install OpenRocket the usual way. Ogive finds it in `C:\Program Files\OpenRocket` and uses the
+  Java that comes with it.
+- **macOS and Linux**: the simplest route is the plain
+  [`OpenRocket-24.12.jar`](https://github.com/openrocket/openrocket/releases/tag/release-24.12) plus Java 17 or
+  newer (for example [Temurin 17](https://adoptium.net/)). Point `OPENROCKET_HOME` at the jar; Ogive runs it on
+  the Java in `JAVA_HOME`, or your default Java. If you used the installer instead, Ogive looks in
+  `/Applications/OpenRocket.app` (macOS) and `~/OpenRocket` or `/opt/OpenRocket` (Linux) and uses the Java
+  inside it.
 
-**Claude Code** (needs Python 3.11+ and git):
+`OPENROCKET_HOME` can be an OpenRocket folder or the jar itself. Ogive refuses Java older than 17 and says why.
+
+**Claude Desktop:** download the `.mcpb` from the [latest release](https://github.com/michaelsheffernan/ogive/releases/latest)
+(or build it with `.\tasks.ps1 mcpb`, needs Node.js), open it with Claude Desktop, and pick your rockets folder.
+Ogive only reads and writes inside it, and relative paths mean that folder. The first launch takes a minute or so
+while it installs Python packages.
+
+**Claude Code** (needs Python 3.11+ and git). On Windows:
 
     git clone https://github.com/michaelsheffernan/ogive
     cd ogive
@@ -87,8 +100,18 @@ Run `claude` in that folder and approve the `ogive` server. To use it from anywh
 
     claude mcp add --scope user ogive -- C:\path\to\ogive\.venv\Scripts\python.exe -m ogive.server
 
-Add `-e OPENROCKET_HOME=...` if OpenRocket isn't in `C:\Program Files\OpenRocket`, and `-e OGIVE_ROOT=C:\Rockets`
-to keep Ogive inside one folder.
+On macOS or Linux:
+
+    git clone https://github.com/michaelsheffernan/ogive
+    cd ogive
+    python3 -m venv .venv
+    .venv/bin/python -m pip install -e ".[dev,openrocket,mcp]"
+    claude mcp add ogive -e OPENROCKET_HOME=$HOME/OpenRocket-24.12.jar -- "$PWD/.venv/bin/python" -m ogive.server
+
+(The repo's `.mcp.json` points at the Windows path; the `claude mcp add` above takes its place for you.)
+
+Add `-e OPENROCKET_HOME=...` if OpenRocket isn't where Ogive looks, and `-e OGIVE_ROOT=C:\Rockets` (or
+`~/Rockets`) to keep Ogive inside one folder.
 
 If PowerShell won't run the scripts: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
@@ -102,8 +125,10 @@ If PowerShell won't run the scripts: `Set-ExecutionPolicy -Scope CurrentUser Rem
 then quit Claude Desktop completely (not just the window) and open it again. The 0.1.1 bundle sets this timeout
 itself, so you should only need it with older bundles.
 
-**"No OpenRocket install"**: Ogive looks in `C:\Program Files\OpenRocket`. Point it at another folder in the
-bundle's settings (Claude Desktop) or with `OPENROCKET_HOME` (Claude Code).
+**"No OpenRocket install"**: the message lists where Ogive looked. Point it at the OpenRocket folder in the
+bundle's settings (Claude Desktop), or set `OPENROCKET_HOME` to the folder or the jar (Claude Code).
+
+**"OpenRocket needs Java 17 or newer"**: the jar ran on an older Java. Install Java 17+ and set `JAVA_HOME` to it.
 
 **Flying the wrong sim**: when you don't name a simulation, Ogive flies the design's first one. If your
 designs carry a standard sim (same name in every file), put its name in the bundle's "Reference simulation"

@@ -19,3 +19,4 @@ packaging/mcpb/uv.lock
 
 # Ogive edit outputs (MCP edit_design / optimizer write next to the design)
 data/ogive/
+.openrocket/

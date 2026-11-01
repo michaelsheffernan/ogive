@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0 (2026-11-01)
+
+**Added**: macOS and Linux. `OPENROCKET_HOME` can now be an OpenRocket folder or the plain `OpenRocket-24.12.jar`.
+Ogive uses the Java bundled with an install when there is one, else `JAVA_HOME`, else your default Java, and
+refuses Java older than 17 with the reason (OpenRocket 24.12 is built for 17). Left empty, it looks where the
+installers put OpenRocket on each system: `C:\Program Files\OpenRocket`, `/Applications/OpenRocket.app`,
+`~/OpenRocket`, `/opt/OpenRocket`. The search is bounded, so a wrong folder fails fast, and a Java that happens
+to sit next to a loose jar is never borrowed. "No OpenRocket install" now lists every place it looked.
+
+**Added**: CI runs the real engine on Linux and macOS. It downloads OpenRocket's released 24.12 jar, checks its
+sha256, and runs every OpenRocket test on Temurin 17. Until now CI skipped them.
+
+**Changed**: the Claude Desktop bundle allows macOS, and its OpenRocket folder setting has no Windows default
+any more (empty means "look in the usual place").
+
+**Docs**: setup for macOS and Linux; the limits list no longer says Ogive can't swap motors (`set_motor` came in
+0.2.0).
+
 ## 0.2.0 (2026-11-01)
 
 **Added**: `render_design`, a to-scale side view of a design, drawn from OpenRocket's own model: nose profile,

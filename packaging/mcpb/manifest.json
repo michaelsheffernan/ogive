@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "ogive",
   "display_name": "Ogive",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Rocket design copilot over OpenRocket: judge every change, prove it by simulation.",
   "long_description": "Ogive drives your local OpenRocket 24.12 headless. Read and edit .ork designs, fly their simulations, judge them against safety rules (stability through the ascent, rod speed, fin flutter, recovery, motor curve sanity, stale results) and compare versions. Every number carries its provenance: backend, seed and the file's sha256. Edits always write a new file. Advisory only: OpenRocket and RASAero II sign off on real flights. Needs OpenRocket 24.12 installed (Windows).",
   "author": {
@@ -60,9 +60,8 @@
     "openrocket_home": {
       "type": "directory",
       "title": "OpenRocket folder",
-      "description": "Where OpenRocket 24.12 is installed (holds jar/ and jre/).",
-      "required": false,
-      "default": "C:\\Program Files\\OpenRocket"
+      "description": "Leave empty to look where OpenRocket 24.12 installs (C:\\Program Files\\OpenRocket, /Applications/OpenRocket.app). Otherwise pick the folder it's in.",
+      "required": false
     },
     "workspace": {
       "type": "directory",
@@ -135,7 +134,8 @@
   "prompts_generated": true,
   "compatibility": {
     "platforms": [
-      "win32"
+      "win32",
+      "darwin"
     ],
     "runtimes": {
       "python": ">=3.11"

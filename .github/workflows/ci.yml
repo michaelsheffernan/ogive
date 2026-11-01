@@ -1,5 +1,8 @@
-# Lint and test on every push and pull request. OpenRocket isn't installed on CI runners,
-# so tests marked `openrocket` are skipped here; run `.\tasks.ps1 check` locally for those.
+# Lint and test on every push and pull request.
+# `test` runs everything that doesn't need OpenRocket, on Windows with the oldest and newest Python.
+# `openrocket` is the real engine on Linux and macOS: OpenRocket's released jar (hash pinned) on a
+# system Java 17, every test marked `openrocket`. Windows with the installer is run locally
+# (`.\tasks.ps1 check`).
 name: CI
 
 on:
@@ -23,3 +26,32 @@ jobs:
       - run: python -m ruff check .
       - run: python -m ruff format --check .
       - run: python -m pytest -m "not openrocket"
+
+  openrocket:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      PYTHONUTF8: "1"
+      OPENROCKET_JAR_URL: https://github.com/openrocket/openrocket/releases/download/release-24.12/OpenRocket-24.12.jar
+      OPENROCKET_JAR_SHA256: 4959b72f52f5f607941e9722abbb7b7f0c4a38ebbbf84204a329db9f31c4f897
+      OPENROCKET_HOME: ${{ github.workspace }}/.openrocket/OpenRocket-24.12.jar
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Download OpenRocket 24.12 and check its hash
+        run: |
+          curl -fsSL --create-dirs -o "$OPENROCKET_HOME" "$OPENROCKET_JAR_URL"
+          python -c "import hashlib, os; d = hashlib.sha256(open(os.environ['OPENROCKET_HOME'], 'rb').read()).hexdigest(); assert d == os.environ['OPENROCKET_JAR_SHA256'], d"
+      - run: python -m pip install -e ".[dev,openrocket,mcp]"
+      # Fails the job (instead of skipping every test) if OpenRocket or Java can't be found.
+      - run: python -c "from ogive.sim import openrocket; print(openrocket.start())"
+      - run: python -m pytest -m openrocket -rs

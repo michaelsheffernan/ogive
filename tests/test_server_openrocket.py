@@ -1,6 +1,7 @@
 """MCP server end to end with OpenRocket: in-process client, then a real stdio subprocess."""
 
 import asyncio
+import os
 import sys
 
 import pytest
@@ -100,8 +101,12 @@ def test_optimizer_over_mcp_reports_progress(design):
 
 def test_stdio_server_speaks_clean_json_rpc(design):
     """A real `python -m ogive.server` subprocess. Any stray Java output on stdout would
-    corrupt the protocol and fail this test."""
-    params = StdioServerParameters(command=sys.executable, args=["-m", "ogive.server"], cwd=REPO)
+    corrupt the protocol and fail this test. The full environment goes along: the SDK passes
+    only a safe few variables by default, and OPENROCKET_HOME / JAVA_HOME (CI's jar) aren't
+    among them."""
+    params = StdioServerParameters(
+        command=sys.executable, args=["-m", "ogive.server"], cwd=REPO, env=dict(os.environ)
+    )
 
     async def judge(client):
         listed = await client.list_tools()
