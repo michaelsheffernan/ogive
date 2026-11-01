@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0 (2026-11-01)
+
+**Added**: `landing_dispersion`, a Monte Carlo of where the rocket lands. It flies the simulation 3 to 200
+times in OpenRocket (default 20). Each flight has its own turbulence seed, a wind speed drawn from a normal
+around the sim's stored wind (default 2 m/s spread, clipped at 0) and a wind direction drawn the same way
+(default 20 degrees). Everything else stays as stored, including whether the rod is aimed into the wind. It returns a
+to-scale map seen from above (pad, range rings, every landing, the farthest one marked, the 95 % ellipse,
+the wind, north), the mean drift and bearing, the farthest landing, the apogee and ground-hit spread, and,
+given a field radius, how many flights land outside it. The ellipse comes from the sample covariance
+(semi-axes sqrt(5.991 x eigenvalue), the chi-square value for 2 degrees of freedom at 95 %) and assumes
+normal scatter, so the farthest flight is always reported beside it. About 1 s per flight (20 flights of the
+reference rocket: 13 s). Progress is reported per flight. Also `ogive landing` on the command line, which
+writes the map and a CSV of every flight.
+
+**Added**: `run_simulation` takes `wind_speed` and `wind_from_deg` to fly one flight in a different wind
+("what does 8 m/s from the west do?"), without touching the file. Its conditions now carry the wind
+direction.
+
+**Found**: OpenRocket's wind direction is the compass bearing the wind blows FROM. Measured, not assumed: 10
+m/s from 0 degrees drifts the reference rocket 670 m south, from 90 degrees 671 m west. A test pins it.
+
 ## 0.3.0 (2026-11-01)
 
 **Added**: macOS and Linux. `OPENROCKET_HOME` can now be an OpenRocket folder or the plain `OpenRocket-24.12.jar`.

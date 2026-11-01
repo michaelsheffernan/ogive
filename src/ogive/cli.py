@@ -11,6 +11,8 @@ ogive optimize FILE [--sim NAME] [--fins 30:45:1] [--nose 0:30:5] [-o DIR]
                                      sweep fin height (mm) and nose weight (g), judge every variant
 ogive render FILE [-o OUT_STEM] [--assumed NAME ...]
                                      to-scale side view from OpenRocket's model (PNG + SVG)
+ogive landing FILE [--sim NAME] [--runs 20] [--seed 0] [--wind-sd 2] [--dir-sd 20] [--field M]
+                                     Monte Carlo landings in scattered wind (map PNG + CSV)
 """
 
 from __future__ import annotations
@@ -105,6 +107,17 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--rules", type=Path, help="TOML file overriding the default rules")
     opt.add_argument("-o", "--out", type=Path, help="output folder (default out/opt/FILE_STEM)")
     opt.set_defaults(handler=cmd_optimize)
+
+    land = commands.add_parser("landing", help="Monte Carlo landings in scattered wind")
+    land.add_argument("file", type=Path)
+    land.add_argument("--sim", help="simulation to fly (default: first in the file)")
+    land.add_argument("--runs", type=int, default=20, help="flights, 3 to 200 (default 20)")
+    land.add_argument("--seed", type=int, default=0, help="first seed (default 0)")
+    land.add_argument("--wind-sd", type=float, default=2.0, help="wind speed spread, m/s (1 sd)")
+    land.add_argument("--dir-sd", type=float, default=20.0, help="wind direction spread, deg")
+    land.add_argument("--field", type=float, help="field radius in m: count landings outside")
+    land.add_argument("-o", "--out", type=Path, help="output path without extension")
+    land.set_defaults(handler=cmd_landing)
     return parser
 
 
@@ -247,6 +260,57 @@ def cmd_render(args: argparse.Namespace) -> int:
     if r["assumed"]:
         print(f"  ASSUMED: {', '.join(r['assumed'])}")
     print(f"  wrote {png} and {svg}")
+    return 0
+
+
+def cmd_landing(args: argparse.Namespace) -> int:
+    import csv
+
+    from ogive.server import tools
+    from ogive.sim import openrocket
+
+    def progress(done: int, total: int) -> None:
+        print(f"  flight {done}/{total}", end="\r", file=sys.stderr, flush=True)
+
+    try:
+        record, png = tools.landing_dispersion(
+            str(args.file),
+            args.sim,
+            args.runs,
+            args.seed,
+            args.wind_sd,
+            args.dir_sd,
+            args.field,
+            progress,
+        )
+    except openrocket.OpenRocketUnavailable as error:
+        raise ValueError(str(error)) from error
+    stem = args.out or Path("out") / "landing" / args.file.stem
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    png_path, csv_path = stem.with_suffix(".png"), stem.with_suffix(".csv")
+    png_path.write_bytes(png)
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(record["flights"][0]))
+        writer.writeheader()
+        writer.writerows(record["flights"])
+    w, land, e = record["wind"], record["landing"], record["landing"]["ellipse_95"]
+    print(f"{args.file}  [{record['provenance']['backend']}]  {record['simulation']}")
+    print(
+        f"  {record['runs']} flights, wind {w['stored_average_ms']} +- {w['speed_sd_ms']} m/s "
+        f"from {w['stored_from_deg']} +- {w['direction_sd_deg']} deg"
+    )
+    print(
+        f"  mean landing {land['mean_distance_m']} m at {land['mean_bearing_deg']} deg; "
+        f"farthest {land['farthest_m']} m at {land['farthest_bearing_deg']} deg"
+    )
+    print(
+        f"  95 % ellipse {e['semi_major_m']} x {e['semi_minor_m']} m, long axis "
+        f"{e['major_axis_bearing_deg']} deg (rough with few flights)"
+    )
+    if "field" in record:
+        fld = record["field"]
+        print(f"  outside the {fld['radius_m']} m field: {fld['outside']} of {fld['of']}")
+    print(f"  wrote {png_path} and {csv_path}")
     return 0
 
 

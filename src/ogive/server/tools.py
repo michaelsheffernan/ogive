@@ -197,14 +197,25 @@ def run_simulation(
     seed: int = 0,
     series: Sequence[str] = (),
     max_points: int = 200,
+    wind_speed: float | None = None,
+    wind_from_deg: float | None = None,
 ) -> dict[str, Any]:
-    """Fly one of the file's simulations in OpenRocket. Same file + same seed = same flight."""
+    """Fly one of the file's simulations in OpenRocket. Same file + same seed = same flight.
+
+    wind_speed (m/s) and wind_from_deg (compass bearing the wind blows from) override the sim's
+    stored wind for this flight only; the file isn't changed.
+    """
     path = design_path(file)
     unknown = set(series) - set(openrocket.SERIES)
     if unknown:
         raise ToolError(f"unknown series {sorted(unknown)}; known: {sorted(openrocket.SERIES)}")
+    if wind_speed is not None and wind_speed < 0:
+        raise ToolError("wind_speed can't be negative")
+    direction = None if wind_from_deg is None else math.radians(wind_from_deg % 360)
     with _openrocket:
-        result = openrocket.simulate(path, pick_simulation(path, simulation), seed)
+        result = openrocket.simulate(
+            path, pick_simulation(path, simulation), seed, wind_speed, direction
+        )
     record: dict[str, Any] = {
         "simulation": result.simulation,
         "summary": asdict(result.summary),
@@ -1028,3 +1039,101 @@ def _row_record(r: Row | None) -> dict[str, Any] | None:
         "flutter_margin": r.measured("flutter.margin"),
         "file": str(r.file),
     }
+
+
+# --- landing dispersion -------------------------------------------------------------------
+
+
+def landing_dispersion(
+    file: str,
+    simulation: str | None = None,
+    runs: int = 20,
+    seed: int = 0,
+    wind_speed_sd: float = 2.0,
+    wind_direction_sd: float = 20.0,
+    field_radius_m: float | None = None,
+    progress=None,
+) -> tuple[dict[str, Any], bytes]:
+    """Monte Carlo landings in scattered wind: the record and a map PNG."""
+    from ogive.sim.dispersion import landing_dispersion as fly_dispersion
+    from ogive.viewer import landing_map
+
+    path = design_path(file)
+    if field_radius_m is not None and field_radius_m <= 0:
+        raise ToolError("field_radius_m must be positive")
+    try:
+        with _openrocket:
+            d = fly_dispersion(
+                path,
+                pick_simulation(path, simulation),
+                runs,
+                seed,
+                wind_speed_sd,
+                wind_direction_sd,
+                field_radius_m,
+                progress,
+            )
+    except (ValueError, KeyError, NotImplementedError) as error:
+        raise ToolError(str(error)) from error
+    e, far = d.ellipse, d.farthest
+    apogees = [landing.apogee for landing in d.landings]
+    hits = [landing.ground_hit_velocity for landing in d.landings]
+    record: dict[str, Any] = {
+        "simulation": d.simulation,
+        "runs": len(d.landings),
+        "wind": {
+            "stored_average_ms": round(d.wind_average, 2),
+            "stored_from_deg": round(d.wind_from, 1),
+            "speed_sd_ms": wind_speed_sd,
+            "direction_sd_deg": wind_direction_sd,
+            "convention": "deg the wind blows FROM, clockwise from north (OpenRocket's)",
+        },
+        "landing": {
+            "mean_distance_m": round(math.hypot(e.east, e.north), 1),
+            "mean_bearing_deg": round(_compass(e.east, e.north), 1),
+            "farthest_m": round(far.distance, 1),
+            "farthest_bearing_deg": round(far.bearing, 1),
+            "farthest_seed": far.seed,
+            "ellipse_95": {
+                "east_m": round(e.east, 1),
+                "north_m": round(e.north, 1),
+                "semi_major_m": round(e.semi_major, 1),
+                "semi_minor_m": round(e.semi_minor, 1),
+                "major_axis_bearing_deg": round(e.major_bearing, 1),
+            },
+        },
+        "apogee_m": {
+            "min": round(min(apogees), 1),
+            "mean": round(sum(apogees) / len(apogees), 1),
+            "max": round(max(apogees), 1),
+        },
+        "ground_hit_velocity_ms": {"min": round(min(hits), 2), "max": round(max(hits), 2)},
+        "flights": [
+            {
+                "seed": landing.seed,
+                "wind_ms": round(landing.wind_speed, 2),
+                "wind_from_deg": round(landing.wind_from, 1),
+                "east_m": round(landing.east, 1),
+                "north_m": round(landing.north, 1),
+                "distance_m": round(landing.distance, 1),
+                "apogee_m": round(landing.apogee, 1),
+            }
+            for landing in d.landings
+        ],
+        "notes": [
+            "Each flight: its own turbulence seed, wind speed ~ Normal(stored, speed_sd) clipped "
+            "at 0, direction ~ Normal(stored, direction_sd). Everything else as stored, including "
+            "whether the rod is aimed into the wind.",
+            "The 95 % ellipse assumes the landings scatter like a 2D normal; with few runs it's "
+            "rough. The farthest flight is the hard number.",
+            "ground_hit_velocity is TOTAL speed in OpenRocket 24.12, not vertical.",
+        ],
+        "provenance": provenance(path, d.backend, seed=seed, simulation=d.simulation),
+    }
+    if field_radius_m is not None:
+        record["field"] = {"radius_m": field_radius_m, "outside": d.outside, "of": len(d.landings)}
+    return record, landing_map.to_png(d)
+
+
+def _compass(east: float, north: float) -> float:
+    return math.degrees(math.atan2(east, north)) % 360.0

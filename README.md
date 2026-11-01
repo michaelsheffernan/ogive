@@ -47,7 +47,7 @@ It doesn't sign off on flights. OpenRocket, RASAero II, your club and your RSO d
   only reads the result, and the tests pin it.
 - Runs on Linux and macOS: on every push, CI downloads the released OpenRocket 24.12 jar (hash checked), runs it
   on Java 17 on both, and passes every OpenRocket test there, the judge's exact numbers included.
-- 235 automated tests, run on every push with Python 3.11 and 3.14.
+- 263 automated tests, run on every push with Python 3.11 and 3.14.
 
 ## An example
 
@@ -62,7 +62,8 @@ speed. Now I know what to measure before I trust either.
 - The flutter check is a rough screen for a flat plate. It assumes a fin shear modulus of 3 GPa, on the safe side,
   until you give it a real one from a datasheet or a test.
 - Above Mach 1, OpenRocket's aerodynamics are approximate. Ogive warns you; cross-check in RASAero II.
-- One wind seed per run. No Monte Carlo yet.
+- Landing dispersion scatters the wind only. Rod angle, motor and drag aren't varied yet, and the 95 %
+  ellipse is rough with 20 flights; trust the farthest flight more.
 - It can change numbers, add masses and swap motors. It can't add other parts yet.
 - The optimizer only sweeps fin height and nose weight.
 - The first call takes about 10 s while Java starts. Then about 1 s each.
@@ -142,11 +143,13 @@ Ogive build serves its viewer under a new address, so this shouldn't happen; if 
 - "Judge `my_rocket.ork` on its first sim. What fails, and what's assumed?"
 - "Make it faster without failing the judge. One change at a time, prove each one."
 - "Sweep fin height 28 to 40 mm and nose weight 0 to 20 g. Lightest design that passes?"
+- "Where does it land if the wind is off by 3 m/s and 30 degrees? Our field is 500 m across."
 
 ## The tools
 
 - `inspect_design`: every part and every number you can edit, plus motors and stored sims.
-- `run_simulation`: fly a sim. Same file and seed, same flight.
+- `run_simulation`: fly a sim. Same file and seed, same flight. Give it a wind speed and direction to ask
+  what if.
 - `static_stability`: CG, CP and calibers, same as OpenRocket's design view.
 - `judge_design`: fly it and run the 14 rules. Every verdict says where its number came from.
 - `edit_design`: change numbers, save a new file.
@@ -165,6 +168,10 @@ Ogive build serves its viewer under a new address, so this shouldn't happen; if 
 - `add_mass_component`: nose weight or ballast, new file.
 - `compare_designs`: diff two designs, fly both on the same sim and seed, show what changed.
 - `optimize_fins_and_nose_weight`: try a grid of fin heights and nose weights, judge every one.
+- `landing_dispersion`: where it lands when the wind isn't what the sim says. Flies the sim 20 times (or up
+  to 200), each with its own turbulence seed and the wind scattered around the stored wind (speed and
+  direction). Returns a to-scale map with every landing, the 95 % ellipse and the farthest flight, plus how
+  many land outside your field if you give its radius. About 1 s per flight. Same call, same flights.
 
 The rules: stability at Mach 0.3 and all the way up, rod exit speed, fin flutter, ground hit speed, recovery
 warnings, thrust curve vs its name, stale stored results, stored burn time vs the motor, the rocket-equation
@@ -179,6 +186,7 @@ No AI needed for this part. Activate the venv first (`.venv\Scripts\Activate.ps1
     ogive sim my_rocket.ork --sim "Simulation 1" --seed 42 --csv out\flight.csv
     ogive judge my_rocket.ork --sim "Simulation 1"
     ogive optimize my_rocket.ork --sim "Simulation 1" --fins 30:45:1 --nose 0:30:5
+    ogive landing my_rocket.ork --sim "Simulation 1" --runs 50 --wind-sd 3 --field 250
     ogive set my_rocket.ork --component "Trapezoidal Fin Set" --field height --value 0.030 -o out\fin30.ork
 
 `judge` exits with 1 if anything fails, so it works in scripts. `--seed` pins the wind. OpenRocket 24.12 doesn't

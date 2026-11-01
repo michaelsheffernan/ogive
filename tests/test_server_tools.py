@@ -200,9 +200,11 @@ def test_server_lists_every_tool_resource_and_prompt():
         "add_mass_component",
         "compare_designs",
         "optimize_fins_and_nose_weight",
+        "landing_dispersion",
     }
     read_only = {t.name for t in listed if t.annotations and t.annotations.read_only_hint}
     assert "edit_design" not in read_only and "judge_design" in read_only
+    assert "landing_dispersion" in read_only
     from ogive.viewer.page import viewer_uri
 
     assert sorted(str(r.uri) for r in resources) == ["ogive://rules/default", viewer_uri()]

@@ -697,6 +697,7 @@ class LaunchConditions:
     isa: bool  # True = International Standard Atmosphere
     time_step: float  # s
     seed: int
+    wind_direction: float = 0.0  # rad, as OpenRocket stores it (see wind_from_bearing)
 
 
 @dataclass(frozen=True)
@@ -749,14 +750,34 @@ def list_simulations(path: str | Path) -> list[str]:
     return [str(s.getName()) for s in _load_document(path).getSimulations()]
 
 
+def stored_wind(path: str | Path, simulation: str | None = None) -> tuple[str, float, float]:
+    """(sim name, average wind m/s, wind direction rad) as stored in one of the file's sims."""
+    start()
+    sims = {str(s.getName()): s for s in _load_document(path).getSimulations()}
+    if not sims:
+        raise ValueError(f"{Path(path).name} has no simulations")
+    name = simulation or next(iter(sims))
+    if name not in sims:
+        raise KeyError(f"no simulation named {name!r} in {Path(path).name}. Known: {list(sims)}")
+    options = sims[name].getOptions()
+    direction = float(options.getAverageWindModel().getDirection())
+    return name, float(options.getWindSpeedAverage()), direction
+
+
 def simulate(
-    path: str | Path, simulation: str | None = None, seed: int | None = None
+    path: str | Path,
+    simulation: str | None = None,
+    seed: int | None = None,
+    wind_speed: float | None = None,
+    wind_direction: float | None = None,
 ) -> FlightResult:
     """Run one of the file's simulations headless, exactly as OpenRocket would.
 
     simulation: sim name in the file; default is the first one.
     seed: the random seed for wind turbulence. Same file + same seed = identical result.
     None keeps the seed stored in the file, so a re-run reproduces what OpenRocket last ran.
+    wind_speed (m/s) and wind_direction (rad, OpenRocket's convention) override the sim's
+    average wind for this run only; turbulence intensity stays as stored. The file is untouched.
     """
     install = start()
     import jpype
@@ -774,6 +795,8 @@ def simulate(
     options = sim.getOptions()
     if seed is not None:
         _set_seed(options, int(seed))
+    if wind_speed is not None or wind_direction is not None:
+        _set_wind(options, wind_speed, wind_direction)
 
     try:
         sim.simulate()
@@ -841,6 +864,21 @@ def _set_seed(options, seed: int) -> None:
     field.set(options, new)
 
 
+def _set_wind(options, speed: float | None, direction: float | None) -> None:
+    """Override the average wind; keep the turbulence intensity (standard deviation / average)."""
+    if str(options.getWindModelType()) != "AVERAGE":
+        raise NotImplementedError("wind overrides need the average wind model")
+    model = options.getAverageWindModel()
+    if speed is not None:
+        if speed < 0:
+            raise ValueError(f"wind speed can't be negative: {speed}")
+        intensity = float(options.getWindTurbulenceIntensity())
+        model.setAverage(float(speed))
+        model.setStandardDeviation(intensity * float(speed))
+    if direction is not None:
+        model.setDirection(float(direction))
+
+
 def _load_document(path: str | Path):
     import jpype
 
@@ -863,4 +901,5 @@ def _conditions(options) -> LaunchConditions:
         isa=bool(options.isISAAtmosphere()),
         time_step=float(options.getTimeStep()),
         seed=int(options.getRandomSeed()),
+        wind_direction=float(options.getAverageWindModel().getDirection()),
     )

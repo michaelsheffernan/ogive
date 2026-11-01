@@ -116,7 +116,7 @@ def test_stdio_server_speaks_clean_json_rpc(design):
         return listed, result
 
     listed, result = mcp_call(judge, params)
-    assert len(listed.tools) == 13
+    assert len(listed.tools) == 14
     assert not result.is_error and result.structured_content["passed"]
 
 
@@ -417,3 +417,133 @@ def test_replay_flight_over_mcp(design):
     assert data["summary"]["max_mach"] == pytest.approx(flight.summary.max_mach)
     text = json.loads(result.content[0].text)
     assert text["attitude_simulated_until_s"] == pytest.approx(deployments[0])
+
+
+# --- landing dispersion -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("wind_from", "drift"), [(0, "south"), (90, "west"), (180, "north")])
+def test_wind_direction_is_where_the_wind_blows_from(design, wind_from, drift):
+    """OpenRocket's wind direction is the bearing the wind comes FROM, clockwise from north.
+    Measured, not assumed: 10 m/s drifts this rocket ~670 m downwind."""
+    import math
+
+    flight = openrocket.simulate(
+        design, REF_SIM, 0, wind_speed=10.0, wind_direction=math.radians(wind_from)
+    )
+    east, north = flight.series["east"][-1], flight.series["north"][-1]
+    expected = {"south": (0, -1), "west": (-1, 0), "north": (0, 1)}[drift]
+    assert east * expected[0] + north * expected[1] > 400  # well downwind
+    assert abs(east * expected[1]) + abs(north * expected[0]) < 50  # and not sideways
+    assert flight.conditions.wind_direction == pytest.approx(math.radians(wind_from))
+
+
+def test_wind_override_leaves_the_file_alone(design):
+    before = design.read_bytes()
+    stored = openrocket.stored_wind(design, REF_SIM)
+    openrocket.simulate(design, REF_SIM, 0, wind_speed=9.0, wind_direction=1.0)
+    assert design.read_bytes() == before
+    assert openrocket.stored_wind(design, REF_SIM) == stored
+
+
+def test_dispersion_is_reproducible_and_honest(design):
+    from ogive.sim.dispersion import landing_dispersion
+
+    a = landing_dispersion(design, REF_SIM, runs=5, seed=3, field_radius=100.0)
+    b = landing_dispersion(design, REF_SIM, runs=5, seed=3, field_radius=100.0)
+    assert a.landings == b.landings  # same call, same flights
+    assert [lg.seed for lg in a.landings] == [3, 4, 5, 6, 7]
+    assert a.backend.startswith("OpenRocket") and a.simulation == REF_SIM
+    # Each landing is the real last point of that flight.
+    first = a.landings[0]
+    flight = openrocket.simulate(
+        design, REF_SIM, 3, wind_speed=first.wind_speed, wind_direction=_rad(first.wind_from)
+    )
+    assert (first.east, first.north) == (flight.series["east"][-1], flight.series["north"][-1])
+    assert a.outside == sum(lg.distance > 100 for lg in a.landings)
+
+
+def test_zero_spread_flies_the_stored_wind_every_time(design):
+    """With no spread, every flight gets the sim's own wind; only the turbulence seed differs."""
+    from ogive.sim.dispersion import landing_dispersion
+
+    d = landing_dispersion(design, REF_SIM, runs=4, seed=0, speed_sd=0.0, direction_sd=0.0)
+    _, average, _ = openrocket.stored_wind(design, REF_SIM)
+    assert all(lg.wind_speed == pytest.approx(average) for lg in d.landings)
+
+
+def test_landing_dispersion_over_mcp(design):
+    progress = []
+
+    async def disperse(client):
+        async def on_progress(done, total, message):
+            progress.append((done, total))
+
+        return await client.call_tool(
+            "landing_dispersion",
+            {"file": str(design), "simulation": REF_SIM, "runs": 4, "field_radius_m": 300},
+            progress_callback=on_progress,
+        )
+
+    result = mcp_call(disperse)
+    assert not result.is_error, result.content[0].text
+    record = result.structured_content
+    assert result.content[0].type == "image" and result.content[0].mime_type == "image/png"
+    assert record["runs"] == 4 and len(record["flights"]) == 4
+    assert record["field"] == {"radius_m": 300, "outside": record["field"]["outside"], "of": 4}
+    assert record["landing"]["farthest_m"] == max(f["distance_m"] for f in record["flights"])
+    assert record["provenance"]["simulation"] == REF_SIM and record["provenance"]["seed"] == 0
+    assert progress[-1] == (4, 4)
+
+
+def test_landing_dispersion_refuses_bad_input(design):
+    async def disperse(client):
+        return await client.call_tool("landing_dispersion", {"file": str(design), "runs": 2})
+
+    result = mcp_call(disperse)
+    assert result.is_error and "3 to 200" in result.content[0].text
+
+
+def _rad(deg: float) -> float:
+    import math
+
+    return math.radians(deg)
+
+
+def test_landing_cli_writes_map_and_csv(design, tmp_path, capsys):
+    import csv
+
+    from ogive.cli import main
+
+    stem = tmp_path / "land" / "v2"
+    code = main(
+        ["landing", str(design), "--sim", REF_SIM, "--runs", "3", "--field", "100", "-o", str(stem)]
+    )
+    assert code == 0
+    assert stem.with_suffix(".png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    with stem.with_suffix(".csv").open(encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert [int(r["seed"]) for r in rows] == [0, 1, 2]
+    out = capsys.readouterr().out
+    assert "3 flights" in out and "outside the 100" in out
+
+
+def test_run_simulation_flies_a_what_if_wind(design):
+    async def fly(client):
+        return await client.call_tool(
+            "run_simulation",
+            {
+                "file": str(design),
+                "simulation": REF_SIM,
+                "wind_speed": 10.0,
+                "wind_from_deg": 0,
+                "series": ["east", "north"],
+            },
+        )
+
+    result = mcp_call(fly)
+    assert not result.is_error, result.content[0].text
+    record = result.structured_content
+    assert record["conditions"]["wind_average"] == pytest.approx(10.0)
+    assert record["conditions"]["wind_direction"] == pytest.approx(0.0)
+    assert record["series"]["north"][-1] < -400  # wind from the north: lands well south

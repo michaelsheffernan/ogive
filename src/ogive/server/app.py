@@ -177,12 +177,18 @@ def run_simulation(
     seed: int = 0,
     series: list[str] | None = None,
     max_points: int = 200,
+    wind_speed: float | None = None,
+    wind_from_deg: float | None = None,
 ) -> dict[str, Any]:
     """Fly one of the file's simulations in OpenRocket (default: the first). Same file and seed
     give the same flight. `series` picks time series to return (e.g. ["altitude", "velocity",
-    "mach", "stability"]), downsampled to at most max_points."""
+    "mach", "stability"]), downsampled to at most max_points. wind_speed (m/s) and
+    wind_from_deg (compass bearing the wind blows FROM) override the stored wind for this
+    flight only; the file isn't changed."""
     with refusals():
-        return tools.run_simulation(file, simulation, seed, series or (), max_points)
+        return tools.run_simulation(
+            file, simulation, seed, series or (), max_points, wind_speed, wind_from_deg
+        )
 
 
 @server.tool(annotations=READ_ONLY, icons=ICONS)
@@ -350,6 +356,47 @@ async def optimize_fins_and_nose_weight(
     stability = load_rules(plan.rules_path)["stability"]
     with refusals():
         return tools.optimize_result(plan, rows, stability["min_cal"], stability["goal_cal"])
+
+
+@server.tool(annotations=READ_ONLY, icons=ICONS)
+async def landing_dispersion(
+    file: str,
+    ctx: Context,
+    simulation: str | None = None,
+    runs: int = 20,
+    seed: int = 0,
+    wind_speed_sd: float = 2.0,
+    wind_direction_sd: float = 20.0,
+    field_radius_m: float | None = None,
+) -> CallToolResult:
+    """Where will it land? Flies the simulation `runs` times (3 to 200) in OpenRocket, each with
+    its own turbulence seed and a wind scattered around the sim's stored wind: speed +-
+    wind_speed_sd m/s, direction +- wind_direction_sd deg (1 sd). Returns a to-scale map (pad,
+    every landing, 95 % ellipse, farthest flight, wind), mean drift and bearing, the farthest
+    landing, apogee spread, and with field_radius_m how many land outside the field. About 1 s
+    per flight. Same call, same flights."""
+
+    def progress(done: int, total: int) -> None:
+        anyio.from_thread.run(ctx.report_progress, done, total, f"flight {done} of {total}")
+
+    def fly() -> tuple[dict[str, Any], bytes]:
+        return tools.landing_dispersion(
+            file,
+            simulation,
+            runs,
+            seed,
+            wind_speed_sd,
+            wind_direction_sd,
+            field_radius_m,
+            progress,
+        )
+
+    with refusals():
+        record, png = await anyio.to_thread.run_sync(fly)
+    return CallToolResult(
+        content=[image_content(png), TextContent(type="text", text=json.dumps(record, indent=2))],
+        structured_content=record,
+    )
 
 
 @server.resource(
