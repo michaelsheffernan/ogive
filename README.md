@@ -34,6 +34,13 @@ Here it is trying to make a rocket faster: [demo transcript](docs/demo-transcrip
 flew both versions, found +0.007 Mach and a stability drop below the goal, and said not to bother.
 That's the whole idea.
 
+It also answers the question the RSO asks: where will it come down? Twenty real OpenRocket flights of my rocket,
+each in a slightly different wind, against a field 500 m across. Four land outside it.
+
+<p align="center">
+  <img src="assets/landing-map.png" width="560" alt="Landing dispersion map: the pad at the centre, twenty landings drifting south-west, a 95 % ellipse, the farthest flight at 443 m, and a 250 m radius field circle with 4 of 20 landings outside">
+</p>
+
 It doesn't sign off on flights. OpenRocket, RASAero II, your club and your RSO do that.
 
 ## Tested

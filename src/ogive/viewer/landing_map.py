@@ -65,7 +65,7 @@ def to_png(d: Dispersion) -> bytes:
         text(
             fx / SS,
             fy / SS + 4,
-            f"field {d.field_radius:g} m",
+            f"field, {d.field_radius:g} m radius: {d.outside} of {len(d.landings)} land outside",
             size=11,
             fill=FIELD_INK,
             anchor="ma",
