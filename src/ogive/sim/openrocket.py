@@ -9,6 +9,7 @@ Lake 1 uses this to prove OpenRocket reads our files the way we do. Lake 2 adds 
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 from dataclasses import dataclass, field
@@ -125,6 +126,14 @@ def _start(home: str | Path | None) -> Install:
         jpype.startJVM(
             str(install.jvm),
             "-Djava.awt.headless=true",
+            # Small machines (3.5 GB, Claude Desktop open): with the defaults (G1) the start
+            # can fail with "paging file too small". Serial GC, a small starting heap and
+            # handing free heap back cut peak commit for a judge run from 727 to 431 MB
+            # (2026-10-12, v2). Flight results are identical to the last digit.
+            "-XX:+UseSerialGC",
+            "-Xms64m",
+            "-XX:MinHeapFreeRatio=10",
+            "-XX:MaxHeapFreeRatio=30",
             classpath=[str(install.jar)],
             convertStrings=True,
         )
@@ -268,6 +277,237 @@ def static_analysis(path: str | Path, mach: float = 0.3) -> StaticAnalysis:
     )
 
 
+@dataclass(frozen=True)
+class Outline:
+    """One drawn shape of the side view, in metres: x from the nose tip, y up from the axis."""
+
+    role: str  # "body", "fin", "internal" or "motor"
+    kind: str  # OpenRocket class name, e.g. "NoseCone", or "Motor"
+    name: str
+    comment: str  # the component's comment in OpenRocket ("" if none)
+    mass: float  # kg, this component alone as OpenRocket computes it
+    points: list[tuple[float, float]]  # closed polygon
+
+
+@dataclass(frozen=True)
+class FinGeometry:
+    name: str
+    count: int
+    root_chord: float  # m
+    tip_chord: float  # m
+    height: float  # m (span)
+    sweep: float  # m, leading-edge sweep length
+    front_x: float  # m from the nose tip to the root leading edge
+
+
+@dataclass(frozen=True)
+class SideView:
+    """A to-scale side view of the selected configuration, every number from OpenRocket's model.
+
+    Fins are projected the way OpenRocket's own side view draws them: each fin instance's span is
+    scaled by the cosine of its roll angle: a 3-fin set shows one full fin up, two half fins down.
+    """
+
+    backend: str
+    length: float  # m
+    max_radius: float  # m
+    outlines: list[Outline]
+    fins: list[FinGeometry]
+    motors: list[str]  # designations
+    static: StaticAnalysis
+    not_drawn: list[str]  # components the side view doesn't draw yet, "Name (Kind)"
+    # The same geometry for a 3D view (JSON-ready, metres): bodies of revolution as (x, r) profiles,
+    # fin sets as one outline plus per-instance (x, root radius, roll angle), parts and motors as
+    # cylinders on their own axis offsets.
+    model: dict = field(default_factory=dict)
+
+
+BODY_SAMPLES = 48  # radius samples along a nose cone or transition
+
+
+def side_view(path: str | Path) -> SideView:
+    """Geometry for a side-view drawing, from OpenRocket's loaded model of the file."""
+    install = start()
+    import jpype
+
+    static = static_analysis(path)
+    rocket = _load_document(path).getRocket()
+    config = rocket.getSelectedConfiguration()
+    symmetric = jpype.JClass("info.openrocket.core.rocketcomponent.SymmetricComponent")
+    finset = jpype.JClass("info.openrocket.core.rocketcomponent.FinSet")
+    trapezoid = jpype.JClass("info.openrocket.core.rocketcomponent.TrapezoidFinSet")
+    mass_object = jpype.JClass("info.openrocket.core.rocketcomponent.MassObject")
+    ring = jpype.JClass("info.openrocket.core.rocketcomponent.RingComponent")
+    assembly = jpype.JClass("info.openrocket.core.rocketcomponent.ComponentAssembly")
+    rocket_class = jpype.JClass("info.openrocket.core.rocketcomponent.Rocket")
+
+    outlines, fins, not_drawn = [], [], []
+    model: dict = {"bodies": [], "fin_sets": [], "parts": [], "motors": []}
+    for c in rocket:
+        if isinstance(c, (rocket_class, assembly)):
+            continue  # containers (rocket, stages) have no shape of their own
+        name, kind = str(c.getName()).strip(), str(c.getClass().getSimpleName())
+        comment = str(c.getComment() or "").strip()
+        mass = float(c.getComponentMass())
+        location = c.getComponentLocations()[0]
+        x0 = float(location.x)
+        if isinstance(c, symmetric):
+            length = float(c.getLength())
+            samples = 2 if kind == "BodyTube" else BODY_SAMPLES
+            xs = [length * i / samples for i in range(samples + 1)]
+            upper = [(x0 + x, float(c.getRadius(x))) for x in xs]
+            lower = [(x, -y) for x, y in reversed(upper)]
+            outlines.append(Outline("body", kind, name, comment, mass, upper + lower))
+            model["bodies"].append(
+                {
+                    "name": name,
+                    "kind": kind,
+                    "comment": comment,
+                    "mass": mass,
+                    "profile": [[x, r] for x, r in upper],
+                }
+            )
+        elif isinstance(c, finset):
+            points = [(float(p.x), float(p.y)) for p in c.getFinPoints()]
+            instances = []
+            for loc in c.getComponentLocations():
+                angle = math.atan2(float(loc.z), float(loc.y))
+                root = math.hypot(float(loc.y), float(loc.z))
+                projected = [
+                    (float(loc.x) + px, (root + py) * math.cos(angle)) for px, py in points
+                ]
+                outlines.append(Outline("fin", kind, name, comment, mass, projected))
+                instances.append([float(loc.x), root, angle])
+            model["fin_sets"].append(
+                {
+                    "name": name,
+                    "kind": kind,
+                    "comment": comment,
+                    "mass": mass,
+                    "thickness": float(c.getThickness()),
+                    "points": [list(pt) for pt in points],
+                    "instances": instances,
+                }
+            )
+            if isinstance(c, trapezoid):
+                fins.append(
+                    FinGeometry(
+                        name,
+                        int(c.getFinCount()),
+                        float(c.getRootChord()),
+                        float(c.getTipChord()),
+                        float(c.getHeight()),
+                        float(c.getSweep()),
+                        x0,
+                    )
+                )
+        elif isinstance(c, (mass_object, ring)):
+            length = float(c.getLength())
+            radius = float(c.getRadius() if isinstance(c, mass_object) else c.getOuterRadius())
+            y0 = float(location.y)
+            box = [
+                (x0, y0 + radius),
+                (x0 + length, y0 + radius),
+                (x0 + length, y0 - radius),
+                (x0, y0 - radius),
+            ]
+            outlines.append(Outline("internal", kind, name, comment, mass, box))
+            model["parts"].append(
+                {
+                    "name": name,
+                    "kind": kind,
+                    "comment": comment,
+                    "mass": mass,
+                    "x0": x0,
+                    "length": length,
+                    "radius": radius,
+                    "y": y0,
+                    "z": float(location.z),
+                }
+            )
+        else:
+            not_drawn.append(f"{name} ({kind})")
+
+    designations = []
+    for mc in config.getActiveMotors():
+        motor, mount = mc.getMotor(), mc.getMount()
+        offset = mount.getMotorPosition(config.getId())
+        x0 = float(mount.getComponentLocations()[0].x) + float(offset.x)
+        length, radius = float(motor.getLength()), float(motor.getDiameter()) / 2
+        box = [(x0, radius), (x0 + length, radius), (x0 + length, -radius), (x0, -radius)]
+        designation = str(motor.getDesignation())
+        launch_mass = float(motor.getLaunchMass())
+        outlines.append(Outline("motor", "Motor", designation, "", launch_mass, box))
+        model["motors"].append(
+            {"name": designation, "mass": launch_mass, "x0": x0, "length": length, "radius": radius}
+        )
+        designations.append(designation)
+
+    body = [o for o in outlines if o.role == "body"]
+    return SideView(
+        backend=install.backend,
+        length=max(x for o in body for x, _ in o.points),
+        max_radius=max(abs(y) for o in body for _, y in o.points),
+        outlines=outlines,
+        fins=fins,
+        motors=designations,
+        static=static,
+        not_drawn=not_drawn,
+        model=model,
+    )
+
+
+@dataclass(frozen=True)
+class MotorCurve:
+    """One thrust curve in OpenRocket's motor database."""
+
+    manufacturer: str  # as an .ork stores it, e.g. "Cesaroni Technology"
+    designation: str  # e.g. "282H399-12A"
+    common_name: str  # e.g. "H399"
+    total_impulse: float  # N*s, OpenRocket's integration of this curve
+    average_thrust: float  # N
+    diameter: float  # m
+    length: float  # m
+    digest: str
+    delays: list[float]  # s, the manufacturer's standard delays
+    case: str
+    type: str  # as an .ork stores it, e.g. "reload"
+
+
+def find_motors(designation: str) -> list[MotorCurve]:
+    """Every curve in OpenRocket's database whose designation matches, ignoring the delay suffix.
+
+    "282H399" matches "282H399-12A"; a full "282H399-12A" matches only that.
+    """
+    start()
+    import jpype
+
+    wanted = designation.strip().upper()
+    base = wanted.split("-")[0]
+    database = jpype.JClass("info.openrocket.core.startup.Application").getMotorSetDatabase()
+    curves = []
+    for motor_set in database.getMotorSets():
+        for m in motor_set.getMotors():
+            name = str(m.getDesignation()).upper()
+            if name == wanted or (wanted == base and name.split("-")[0] == base):
+                curves.append(
+                    MotorCurve(
+                        manufacturer=str(m.getManufacturer().getSimpleName()),
+                        designation=str(m.getDesignation()),
+                        common_name=str(m.getCommonName()),
+                        total_impulse=float(m.getTotalImpulseEstimate()),
+                        average_thrust=float(m.getAverageThrustEstimate()),
+                        diameter=float(m.getDiameter()),
+                        length=float(m.getLength()),
+                        digest=str(m.getDigest()),
+                        delays=[float(d) for d in m.getStandardDelays()],
+                        case=str(m.getCaseInfo()),
+                        type=str(m.getMotorType().name()).lower(),
+                    )
+                )
+    return curves
+
+
 def _component_data(c) -> ComponentData:
     kind = str(c.getClass().getSimpleName())
     getters = DIMENSION_GETTERS.get(kind, {})
@@ -314,6 +554,9 @@ SERIES = {
     "wind": "TYPE_WIND_VELOCITY",
     "pressure": "TYPE_AIR_PRESSURE",
     "speed_of_sound": "TYPE_SPEED_OF_SOUND",
+    "theta": "TYPE_ORIENTATION_THETA",  # rad, zenith angle of the rocket's axis
+    "phi": "TYPE_ORIENTATION_PHI",  # rad, azimuth of the rocket's axis
+    "roll_rate": "TYPE_ROLL_RATE",  # rad/s
 }
 
 
@@ -323,6 +566,7 @@ class LaunchConditions:
 
     rod_length: float  # m
     rod_angle: float  # rad
+    rod_direction: float  # rad, OpenRocket's launch rod direction
     latitude: float
     longitude: float
     altitude: float  # m MSL
@@ -339,6 +583,7 @@ class LaunchConditions:
 class FlightEvent:
     time: float  # s
     type: str  # OpenRocket's name, e.g. "Apogee", "Motor burnout"
+    source: str = ""  # the component that caused it, e.g. the recovery device deployed
 
 
 @dataclass(frozen=True)
@@ -439,7 +684,14 @@ def simulate(
             deployment_velocity=float(data.getDeploymentVelocity()),
             optimum_delay=float(data.getOptimumDelay()),
         ),
-        events=[FlightEvent(float(e.getTime()), str(e.getType())) for e in branch.getEvents()],
+        events=[
+            FlightEvent(
+                float(e.getTime()),
+                str(e.getType()),
+                str(e.getSource().getName()) if e.getSource() is not None else "",
+            )
+            for e in branch.getEvents()
+        ],
         warnings=[str(w) for w in sim.getSimulatedWarnings()],
         series=series,
     )
@@ -480,6 +732,7 @@ def _conditions(options) -> LaunchConditions:
     return LaunchConditions(
         rod_length=float(options.getLaunchRodLength()),
         rod_angle=float(options.getLaunchRodAngle()),
+        rod_direction=float(options.getLaunchRodDirection()),
         latitude=float(options.getLaunchLatitude()),
         longitude=float(options.getLaunchLongitude()),
         altitude=float(options.getLaunchAltitude()),

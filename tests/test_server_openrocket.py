@@ -9,6 +9,7 @@ from mcp import Client, StdioServerParameters
 from conftest import REPO
 from ogive.server import tools
 from ogive.server.app import server
+from ogive.sim import openrocket
 
 pytestmark = pytest.mark.openrocket
 
@@ -110,5 +111,304 @@ def test_stdio_server_speaks_clean_json_rpc(design):
         return listed, result
 
     listed, result = mcp_call(judge, params)
-    assert len(listed.tools) == 8
+    assert len(listed.tools) == 13
     assert not result.is_error and result.structured_content["passed"]
+
+
+# ---------- Lake V1: side view from OpenRocket's model ----------
+
+
+def test_side_view_matches_the_ork_geometry(running_openrocket, v2_locked_ork):
+    from ogive.ork_io import OrkDocument
+
+    doc = OrkDocument.load(v2_locked_ork)
+    nose = doc.find_component("Nose Cone")
+    tube = doc.find_component("Body Tube")
+    fins = doc.find_component(FINS)
+    view = openrocket.side_view(v2_locked_ork)
+    by_name = {}
+    for o in view.outlines:
+        by_name.setdefault(o.name, []).append(o)
+
+    def x_range(o):
+        return min(x for x, _ in o.points), max(x for x, _ in o.points)
+
+    assert x_range(by_name["Nose Cone"][0]) == pytest.approx((0, nose.number("length")))
+    tube_end = nose.number("length") + tube.number("length")
+    assert x_range(by_name["Body Tube"][0])[1] == pytest.approx(tube_end)
+    assert view.length == pytest.approx(tube_end)
+    radius = tube.number("radius")
+    upper_fin = max(by_name[FINS], key=lambda o: max(y for _, y in o.points))
+    assert max(y for _, y in upper_fin.points) == pytest.approx(radius + fins.number("height"))
+    assert x_range(upper_fin)[1] - x_range(upper_fin)[0] == pytest.approx(fins.number("rootchord"))
+    (motor,) = [o for o in view.outlines if o.role == "motor"]
+    loaded_motor = openrocket.load(v2_locked_ork).motors[0]
+    assert x_range(motor)[1] == pytest.approx(tube_end)  # minimum diameter: flush aft
+    assert motor.mass == pytest.approx(loaded_motor.launch_mass)
+    static = openrocket.static_analysis(v2_locked_ork)
+    assert view.static.cg_x == pytest.approx(static.cg_x)
+    assert view.static.cp_x == pytest.approx(static.cp_x)
+    assert view.not_drawn == []
+
+
+def test_render_design_over_mcp_returns_png_and_svg(design):
+    import base64
+    import io
+
+    from PIL import Image
+
+    async def render(client):
+        return await client.call_tool(
+            "render_design", {"file": str(design), "assumed": ["Recovery"]}
+        )
+
+    result = mcp_call(render)
+    assert not result.is_error, result.content[0].text
+    image = next(c for c in result.content if c.type == "image")
+    assert Image.open(io.BytesIO(base64.b64decode(image.data))).size == (1600, 640)
+    svg = next(c for c in result.content if c.type == "resource").resource
+    assert svg.mime_type == "image/svg+xml" and "ASSUMED" in svg.text
+    record = result.structured_content
+    assert record["length_mm"] == pytest.approx(793.0) and record["assumed"] == ["Recovery"]
+    assert (
+        record["provenance"]["sha256"] in svg.text
+        or record["provenance"]["sha256"][:12] in svg.text
+    )
+
+
+def test_edit_and_judge_attach_the_render(design):
+    async def calls(client):
+        edited = await client.call_tool(
+            "edit_design",
+            {
+                "file": str(design),
+                "changes": [{"component": FINS, "field": "height", "value": 0.034}],
+            },
+        )
+        judged = await client.call_tool(
+            "judge_design", {"file": str(design), "simulation": REF_SIM}
+        )
+        return edited, judged
+
+    edited, judged = mcp_call(calls)
+    for result in (edited, judged):
+        assert not result.is_error
+        assert [c.type for c in result.content] == ["text", "image"]
+    assert judged.structured_content["passed"]
+
+
+def test_render_v4_raw_if_present(running_openrocket):
+
+    v4 = REPO / "data" / "ogive" / "blackhawk29_v4_raw.ork"
+    if not v4.exists():
+        pytest.skip("private design file not present")
+    drawing = tools.render_design(str(v4), ["Trapezoidal Fin Set.sweeplength"])
+    assert drawing.record["length_mm"] == pytest.approx(1072.0)
+    assert drawing.record["assumed"] == ["Trapezoidal Fin Set"]
+    assert drawing.png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+# ---------- set_motor ----------
+
+
+def test_set_motor_swaps_by_impulse_and_verifies(design):
+    record = tools.set_motor(str(design), "348I204")
+    (loaded,) = openrocket.load(record["output"]).motors
+    assert loaded.designation == "348I204-13A" and loaded.total_impulse == pytest.approx(
+        347.9, abs=0.1
+    )
+    assert record["delay"].startswith("13 s") or "longest, 13 s" in record["delay"]
+    assert "verified" in record and record["mount"] == "mount unchanged"
+
+
+def test_set_motor_lengthens_a_short_mount(design, tmp_path):
+    short = tools.edit_design(
+        str(design),
+        [{"component": "Body Tube", "field": "length", "value": 0.30}],
+        str(tmp_path / "short.ork"),
+    )
+    record = tools.set_motor(short["output"], "381I224")
+    assert "lengthened 300.0 -> 365.0 mm" in record["mount"]
+    from ogive.ork_io import OrkDocument
+
+    tube = OrkDocument.load(record["output"]).find_component("Body Tube")
+    assert tube.number("length") == pytest.approx(0.365)
+
+
+def test_set_motor_refuses_unknown_motors(design):
+    with pytest.raises(tools.ToolError, match="not in OpenRocket's motor database"):
+        tools.set_motor(str(design), "999Z1")
+
+
+# ---------- Lake V2: the 3D viewer's data ----------
+
+
+def test_view_design_sends_openrocket_geometry_to_the_app(design):
+    import hashlib
+    import json
+    import math
+
+    from mcp.client.extension import advertise
+
+    from ogive.ork_io import OrkDocument
+
+    apps = advertise("io.modelcontextprotocol/ui", {"mimeTypes": ["text/html;profile=mcp-app"]})
+    args = {"file": str(design), "assumed": ["Recovery"]}
+
+    async def run():
+        async with Client(server, extensions=[apps]) as client:
+            with_apps = await client.call_tool("view_design", args)
+        async with Client(server) as client:
+            without = await client.call_tool("view_design", args)
+        return with_apps, without
+
+    with_apps, without = asyncio.run(run())
+    assert not with_apps.is_error and not without.is_error
+    # The side view rides along either way: hosts without apps show it, the page falls back to it.
+    assert [c.type for c in with_apps.content] == ["text", "image"]
+    assert [c.type for c in without.content] == ["text", "image"]
+    data = with_apps.structured_content
+    assert data["kind"] == "design" and data["assumed"] == ["Recovery"]
+    assert len(json.dumps(data)) < 50_000
+    assert data["provenance"]["sha256"] == hashlib.sha256(design.read_bytes()).hexdigest()
+
+    doc = OrkDocument.load(design)
+    tube = doc.find_component("Body Tube")
+    fins = doc.find_component(FINS)
+    model = data["model"]
+    bodies = {b["name"]: b for b in model["bodies"]}
+    assert bodies["Nose Cone"]["profile"][0] == pytest.approx([0, 0], abs=1e-9)
+    tail = [data["length"], tube.number("radius")]
+    assert bodies["Body Tube"]["profile"][-1] == pytest.approx(tail)
+    (fin_set,) = model["fin_sets"]
+    assert len(fin_set["instances"]) == int(fins.number("fincount"))
+    assert sorted(round(math.degrees(i[2])) for i in fin_set["instances"]) == [-120, 0, 120]
+    assert fin_set["thickness"] == pytest.approx(fins.number("thickness"))
+    assert max(y for _, y in fin_set["points"]) == pytest.approx(fins.number("height"))
+    (motor,) = model["motors"]
+    assert motor["x0"] + motor["length"] == pytest.approx(data["length"])  # flush aft
+    static = openrocket.static_analysis(design)
+    assert data["cg"] == pytest.approx(static.cg_x) and data["cp"] == pytest.approx(static.cp_x)
+
+
+# ---------- Lake V3: versions on a timeline ----------
+
+
+def test_view_versions_diffs_and_flies_every_version(design, tmp_path):
+    from mcp.client.extension import advertise
+
+    from ogive.judge import judge_file
+
+    taller = tools.edit_design(
+        str(design),
+        [{"component": FINS, "field": "height", "value": 0.040}],
+        str(tmp_path / "v2-fins40.ork"),
+    )["output"]
+    weighted = tools.add_mass_component(
+        taller, "Nose Cone", "Nose weight", 0.015, 0.10, output=str(tmp_path / "v2-nose15.ork")
+    )["output"]
+    files = [str(design), taller, weighted]
+    apps = advertise("io.modelcontextprotocol/ui", {"mimeTypes": ["text/html;profile=mcp-app"]})
+
+    async def run():
+        async with Client(server, extensions=[apps]) as client:
+            return await client.call_tool("view_versions", {"files": files, "simulation": REF_SIM})
+
+    result = asyncio.run(run())
+    assert not result.is_error, result.content[0].text
+    assert [c.type for c in result.content] == ["text", "image"]
+    data = result.structured_content
+    assert data["kind"] == "versions" and data["simulation"] == REF_SIM and data["seed"] == 0
+    assert data["different_simulation"] == []
+    first, second, third = data["versions"]
+    assert first["diff_previous"] is None and first["diff_first"] is None
+    assert [(c["component"], c["field"]) for c in second["diff_previous"]["changed_fields"]] == [
+        (FINS, "height")
+    ]
+    assert third["diff_previous"]["added_components"] == ["Nose weight"]
+    assert third["diff_previous"]["changed_fields"] == []
+    assert third["diff_first"]["added_components"] == ["Nose weight"]
+    assert [c["field"] for c in third["diff_first"]["changed_fields"]] == ["height"]
+    for version, file in zip(data["versions"], files, strict=True):
+        report = judge_file(file, REF_SIM, 0)
+        assert version["flight"]["apogee"] == pytest.approx(report.metrics["apogee"])
+        assert version["passed"] == report.passed
+    assert third["launch_mass"] - second["launch_mass"] == pytest.approx(0.015, abs=1e-6)
+    assert third["cg"] < second["cg"]  # nose weight moves the CG forward
+
+
+def test_view_versions_needs_two_to_twelve_designs(design):
+    with pytest.raises(tools.ToolError, match="give 2 to 12 designs"):
+        tools.view_versions([str(design)])
+
+
+def test_reference_simulation_is_the_default_when_the_file_has_it(design, monkeypatch):
+    from ogive.sim.openrocket import list_simulations
+
+    names = list_simulations(design)
+    assert names[0] != REF_SIM  # otherwise this test proves nothing
+    monkeypatch.setenv("OGIVE_SIMULATION", REF_SIM)
+    assert tools.judge_design(str(design))["simulation"] == REF_SIM
+    assert tools.run_simulation(str(design))["simulation"] == REF_SIM
+    monkeypatch.setenv("OGIVE_SIMULATION", "No such sim")
+    assert tools.judge_design(str(design))["simulation"] == names[0]  # falls back to the first
+    monkeypatch.setenv("OGIVE_SIMULATION", REF_SIM)
+    assert tools.judge_design(str(design), names[0])["simulation"] == names[0]  # a named sim wins
+
+
+# ---------- Lake V4: flight replay ----------
+
+
+def test_replay_attitude_convention_matches_the_flight_path(design):
+    """theta = elevation above the horizon, phi = azimuth from north toward east: coasting, the
+    axis points along the flight path (small angle of attack). The viewer relies on this."""
+    import math
+
+    data, _ = tools.replay_flight(str(design), REF_SIM)
+    s = data["series"]
+    when = {e["type"]: e["time"] for e in data["events"]}
+    angles = []
+    for i in range(1, len(s["time"]) - 1):
+        if not when["Launch rod clearance"] + 0.5 < s["time"][i] < when["Apogee"] - 1:
+            continue
+        dt = s["time"][i + 1] - s["time"][i - 1]
+        v = [(s[k][i + 1] - s[k][i - 1]) / dt for k in ("east", "north", "altitude")]
+        theta, phi = s["theta"][i], s["phi"][i]
+        axis = [math.cos(theta) * math.sin(phi), math.cos(theta) * math.cos(phi), math.sin(theta)]
+        cos = sum(a * b for a, b in zip(axis, v, strict=True)) / math.hypot(*v)
+        angles.append(math.degrees(math.acos(max(-1.0, min(1.0, cos)))))
+    angles.sort()
+    assert len(angles) > 50
+    assert angles[len(angles) // 2] < 3  # median angle between axis and flight path, degrees
+    assert angles[-1] < 15
+
+
+def test_replay_flight_over_mcp(design):
+    import json
+
+    async def call(client):
+        return await client.call_tool("replay_flight", {"file": str(design), "simulation": REF_SIM})
+
+    result = mcp_call(call)
+    assert not result.is_error, result.content[0].text
+    assert [c.type for c in result.content] == ["text", "image"]
+    data = result.structured_content
+    assert data["kind"] == "flight" and data["label"] == "Replay of simulation data, not footage."
+    json.dumps(data, allow_nan=False)  # no NaN for the page's JSON
+    flight = openrocket.simulate(design, REF_SIM, 0)
+    deployments = [e.time for e in flight.events if e.type == "Recovery device deployment"]
+    assert data["attitude_until"] == pytest.approx(deployments[0])
+    deployed = [e for e in data["events"] if e["type"] == "Recovery device deployment"]
+    assert [(e["source"], e["source_kind"]) for e in deployed] == [
+        ("Streamer", "Streamer"),
+        ("Parachute", "Parachute"),
+    ]
+    lengths = {len(v) for v in data["series"].values()}
+    assert len(lengths) == 1
+    up, down = data["mach_crossings"]
+    burnout = next(e["time"] for e in data["events"] if e["type"] == "Motor burnout")
+    assert up["direction"] == "up" and down["direction"] == "down"
+    assert up["time"] < burnout < down["time"]  # supersonic through burnout, as the summary says
+    assert data["summary"]["max_mach"] == pytest.approx(flight.summary.max_mach)
+    text = json.loads(result.content[0].text)
+    assert text["attitude_simulated_until_s"] == pytest.approx(deployments[0])

@@ -40,9 +40,12 @@ It doesn't sign off on flights. OpenRocket, RASAero II, your club and your RSO d
 
 - Installs in Claude Desktop from the `.mcpb` bundle on Windows.
 - `inspect_design`, `edit_design` and `judge_design` used for real from a Claude Desktop chat.
+- The 3D viewer (`view_design`) renders inside a Claude Desktop chat. `view_versions` and `replay_flight` are
+  tested in a headless browser that plays Claude Desktop's part (same frame width, same messages), not yet
+  screenshotted in the app itself.
 - On the reference design, the judge's numbers match OpenRocket 24.12 exactly. OpenRocket does the flying; Ogive
   only reads the result, and the tests pin it.
-- 189 automated tests, run on every push with Python 3.11 and 3.14.
+- 220 automated tests, run on every push with Python 3.11 and 3.14.
 
 ## An example
 
@@ -102,6 +105,13 @@ itself, so you should only need it with older bundles.
 **"No OpenRocket install"**: Ogive looks in `C:\Program Files\OpenRocket`. Point it at another folder in the
 bundle's settings (Claude Desktop) or with `OPENROCKET_HOME` (Claude Code).
 
+**Flying the wrong sim**: when you don't name a simulation, Ogive flies the design's first one. If your
+designs carry a standard sim (same name in every file), put its name in the bundle's "Reference simulation"
+setting, or set `OGIVE_SIMULATION`. Files without it still fly their first, and every result names the sim.
+
+**The 3D view says it can't draw something**: it then shows the numbers and the side view instead. Each
+Ogive build serves its viewer under a new address, so this shouldn't happen; if it does, restart the host.
+
 ## Things to try
 
 - "Judge `my_rocket.ork` on its first sim. What fails, and what's assumed?"
@@ -115,6 +125,18 @@ bundle's settings (Claude Desktop) or with `OPENROCKET_HOME` (Claude Code).
 - `static_stability`: CG, CP and calibers, same as OpenRocket's design view.
 - `judge_design`: fly it and run the 14 rules. Every verdict says where its number came from.
 - `edit_design`: change numbers, save a new file.
+- `render_design`: a to-scale side view from OpenRocket's model, with CG, CP, masses and anything marked
+  ASSUMED hatched. `edit_design` and `judge_design` attach it too.
+- `view_design`: the same model in 3D, inside the chat, in hosts that show MCP Apps. Rotate, zoom, explode
+  the internals, colour parts by mass. Other hosts get the side view.
+- `view_versions`: step through versions of a design on a timeline. The previous (or first) version is a
+  ghost, changed parts are highlighted, and a table shows what moved: apogee, Mach, stability, CG, CP, mass,
+  PASS/FAIL. Every version flies the same sim and seed.
+- `replay_flight`: replay a simulated flight in 3D, like a video. It plays on its own; a caption says what's
+  happening (Motor burning, SUPERSONIC, Coasting, Apogee, Under chute, Landed) and the timeline jumps to
+  each event. Chase camera, with overview, fin, nose and ground-tracker views in a menu. It's a replay of
+  OpenRocket's numbers, not footage, and it says so on screen.
+- `set_motor`: swap the motor by designation. The curve is picked by its real impulse, not just its name.
 - `add_mass_component`: nose weight or ballast, new file.
 - `compare_designs`: diff two designs, fly both on the same sim and seed, show what changed.
 - `optimize_fins_and_nose_weight`: try a grid of fin heights and nose weights, judge every one.

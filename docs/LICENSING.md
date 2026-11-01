@@ -72,6 +72,8 @@ All runtime dependencies use licences compatible with GPLv3.
 | JPype1 1.7 | Python-Java bridge | Apache-2.0 (GPLv3-compatible) | No, installed by pip/uv |
 | mcp (Python SDK) 2.3 | MCP server | MIT | No, installed by pip/uv |
 | pydantic, anyio, starlette, uvicorn (via mcp) | MCP SDK dependencies | MIT, MIT, BSD-3-Clause, BSD-3-Clause | No, installed by pip/uv |
+| Pillow | Draws the side view (PNG) | MIT-CMU (HPND) | No, installed by pip/uv |
+| three.js 0.160.0 | 3D in the in-chat viewer | MIT | Yes: `src/ogive/viewer/vendor/`, with its licence, inlined into the viewer page |
 | pytest, ruff | Development only | MIT | No |
 | TheCheng2005/OpenRocket_MCP | Flutter formula and test cases, ported | GPL-3.0-or-later | Yes, as a port, credited |
 | NACA TN 4197 (Martin, 1958) | Flutter relation | US government work | Formula only |

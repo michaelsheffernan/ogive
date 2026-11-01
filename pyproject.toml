@@ -23,7 +23,7 @@ ogive-mcp = "ogive.server.app:main"
 [project.optional-dependencies]
 dev = ["pytest>=9", "ruff>=0.17"]
 openrocket = ["jpype1>=1.7"]  # OpenRocket backend; needs a local OpenRocket install
-mcp = ["mcp>=2.3,<3"]  # MCP server (ogive-mcp); clients bring the model
+mcp = ["mcp>=2.3,<3", "pillow>=10.1"]  # MCP server (ogive-mcp); clients bring the model
 
 [tool.setuptools.dynamic]
 version = { attr = "ogive.__version__" }
@@ -34,6 +34,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "ogive.judge" = ["*.toml"]
 "ogive.server" = ["*.png"]
+"ogive.viewer" = ["app/*", "vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -192,13 +192,20 @@ def test_server_lists_every_tool_resource_and_prompt():
         "static_stability",
         "judge_design",
         "edit_design",
+        "set_motor",
+        "render_design",
+        "view_design",
+        "view_versions",
+        "replay_flight",
         "add_mass_component",
         "compare_designs",
         "optimize_fins_and_nose_weight",
     }
     read_only = {t.name for t in listed if t.annotations and t.annotations.read_only_hint}
     assert "edit_design" not in read_only and "judge_design" in read_only
-    assert [str(r.uri) for r in resources] == ["ogive://rules/default"]
+    from ogive.viewer.page import viewer_uri
+
+    assert sorted(str(r.uri) for r in resources) == ["ogive://rules/default", viewer_uri()]
     assert [p.name for p in prompts] == ["improve_design"]
 
 
@@ -309,3 +316,91 @@ def test_server_and_every_tool_carry_the_icon():
     server_info, listed = mcp_call(info)
     assert server_info.icons and server_info.icons[0].src.startswith("data:image/png;base64,")
     assert all(t.icons and t.icons[0].mime_type == "image/png" for t in listed)
+
+
+# --- motor choice (pure) ----------------------------------------------------------------------
+
+
+def curve(impulse, digest, delays=(5.0, 7.0, 14.0)):
+    from ogive.sim.openrocket import MotorCurve
+
+    return MotorCurve(
+        "Cesaroni Technology",
+        "229H255-14A",
+        "H255",
+        impulse,
+        255.0,
+        0.029,
+        0.231,
+        digest,
+        list(delays),
+        "Pro29-4G",
+        "reload",
+    )
+
+
+def test_choose_curve_trusts_impulse_not_the_name():
+    mislabelled, real = curve(316.1, "6e3ee79b"), curve(229.0, "39f13f3e")
+    chosen, reason = tools.choose_curve([mislabelled, real], "229H255")
+    assert chosen.digest == "39f13f3e" and "+0.0%" in reason
+    with pytest.raises(tools.ToolError, match="no 229H255 curve within 5%"):
+        tools.choose_curve([mislabelled], "229H255")
+    with pytest.raises(tools.ToolError, match="not in OpenRocket's motor database"):
+        tools.choose_curve([], "229H255")
+    with pytest.raises(tools.ToolError, match="can't read the total impulse"):
+        tools.choose_curve([real], "H255")
+
+
+def test_pick_delay_keeps_or_caps():
+    motor = curve(229.0, "39f13f3e", delays=(3.0, 5.0, 12.0))
+    assert tools.pick_delay(motor, 10.0)[0] == 10.0
+    assert tools.pick_delay(motor, 14.0)[0] == 12.0
+    assert tools.pick_delay(motor, None)[0] is None
+
+
+def test_view_design_is_linked_to_its_mcp_app():
+    from ogive.viewer.page import viewer_html, viewer_uri
+
+    VIEWER_URI = viewer_uri()
+
+    async def read(client):
+        listed = (await client.list_tools()).tools
+        return listed, await client.read_resource(VIEWER_URI)
+
+    listed, page = mcp_call(read)
+    for name in ("view_design", "view_versions", "replay_flight"):
+        view = next(t for t in listed if t.name == name)
+        assert view.meta["ui"]["resourceUri"] == VIEWER_URI
+        assert view.annotations.read_only_hint
+    (content,) = page.contents
+    assert content.mime_type == "text/html;profile=mcp-app"
+    assert content.text == viewer_html()
+
+
+def test_manifest_offers_a_reference_simulation():
+    import json
+
+    from conftest import REPO
+
+    manifest = json.loads((REPO / "packaging" / "mcpb" / "manifest.json").read_text("utf-8"))
+    env = manifest["server"]["mcp_config"]["env"]
+    assert env["OGIVE_SIMULATION"] == "${user_config.reference_simulation}"
+    assert manifest["user_config"]["reference_simulation"]["required"] is False
+
+
+def test_mach_crossings_interpolate_between_samples():
+    crossings = tools.mach_crossings([0, 1, 2, 3], [0.5, 1.5, 1.2, 0.8])
+    assert crossings == [
+        {"time": pytest.approx(0.5), "direction": "up"},
+        {"time": pytest.approx(2.5), "direction": "down"},
+    ]
+    assert tools.mach_crossings([0, 1], [0.2, float("nan")]) == []
+
+
+def test_roll_is_the_running_integral_of_roll_rate():
+    assert tools._integrate([0, 1, 2], [1.0, 1.0, float("nan")]) == [0.0, 1.0, 1.5]
+
+
+def test_viewer_series_are_rounded_and_json_safe():
+    out = tools._finite({"x": [1234.56789123, float("nan"), float("inf")]})
+    assert out == {"x": [1234.57, None, None]}

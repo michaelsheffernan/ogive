@@ -1,3 +1,3 @@
 """Ogive: judge OpenRocket designs and prove every change by simulation."""
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"

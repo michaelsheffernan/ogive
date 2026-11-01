@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "ogive",
   "display_name": "Ogive",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Rocket design copilot over OpenRocket: judge every change, prove it by simulation.",
   "long_description": "Ogive drives your local OpenRocket 24.12 headless. Read and edit .ork designs, fly their simulations, judge them against safety rules (stability through the ascent, rod speed, fin flutter, recovery, motor curve sanity, stale results) and compare versions. Every number carries its provenance: backend, seed and the file's sha256. Edits always write a new file. Advisory only: OpenRocket and RASAero II sign off on real flights. Needs OpenRocket 24.12 installed (Windows).",
   "author": {
@@ -51,7 +51,8 @@
         "OPENROCKET_HOME": "${user_config.openrocket_home}",
         "OGIVE_ROOT": "${user_config.workspace}",
         "PYTHONUTF8": "1",
-        "UV_HTTP_TIMEOUT": "300"
+        "UV_HTTP_TIMEOUT": "300",
+        "OGIVE_SIMULATION": "${user_config.reference_simulation}"
       }
     }
   },
@@ -68,6 +69,13 @@
       "title": "Rocket designs folder",
       "description": "Ogive reads and writes .ork files only inside this folder.",
       "required": true
+    },
+    "reference_simulation": {
+      "type": "string",
+      "title": "Reference simulation",
+      "description": "Simulation to fly when a request doesn't name one, if the design has it (e.g. your team's standard sim). Empty: each design's first simulation.",
+      "required": false,
+      "default": ""
     }
   },
   "tools": [
@@ -90,6 +98,26 @@
     {
       "name": "edit_design",
       "description": "Change numeric fields; always saves a new file."
+    },
+    {
+      "name": "set_motor",
+      "description": "Swap the motor by designation; the curve is chosen by integrated impulse and verified in OpenRocket."
+    },
+    {
+      "name": "render_design",
+      "description": "To-scale side view from OpenRocket's model: PNG to show, SVG to keep."
+    },
+    {
+      "name": "view_design",
+      "description": "Interactive 3D view in the chat (MCP Apps), drawn from OpenRocket's model."
+    },
+    {
+      "name": "view_versions",
+      "description": "Timeline of design versions in 3D: ghost overlay, changed parts, metric deltas."
+    },
+    {
+      "name": "replay_flight",
+      "description": "Replay a simulated flight in 3D: cameras, events, Mach 1; simulation data, not footage."
     },
     {
       "name": "add_mass_component",

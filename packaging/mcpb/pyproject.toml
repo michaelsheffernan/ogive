@@ -3,13 +3,14 @@
 # ships in src/ogive (copied in by scripts/build_mcpb.py), so it is not installed as a package.
 [project]
 name = "ogive-mcpb"
-version = "0.1.2"
+version = "0.2.0"
 description = "Ogive MCP server bundle for Claude Desktop"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 dependencies = [
     "mcp>=2.3,<3",
     "jpype1>=1.7",
+    "pillow>=10.1",
 ]
 
 [tool.uv]

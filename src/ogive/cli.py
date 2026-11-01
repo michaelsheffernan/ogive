@@ -9,6 +9,8 @@ ogive judge FILE [--sim NAME] [--seed N] [--rules RULES.toml]
                                      check a design against the judge rules (exit 1 on any FAIL)
 ogive optimize FILE [--sim NAME] [--fins 30:45:1] [--nose 0:30:5] [-o DIR]
                                      sweep fin height (mm) and nose weight (g), judge every variant
+ogive render FILE [-o OUT_STEM] [--assumed NAME ...]
+                                     to-scale side view from OpenRocket's model (PNG + SVG)
 """
 
 from __future__ import annotations
@@ -78,6 +80,14 @@ def build_parser() -> argparse.ArgumentParser:
     judge.add_argument("--seed", type=int, default=0, help="wind seed (default 0)")
     judge.add_argument("--rules", type=Path, help="TOML file overriding the default rules")
     judge.set_defaults(handler=cmd_judge)
+
+    render = commands.add_parser("render", help="to-scale side view (PNG + SVG)")
+    render.add_argument("file", type=Path)
+    render.add_argument("-o", "--out", type=Path, help="output path without extension")
+    render.add_argument(
+        "--assumed", nargs="*", default=[], help='components (or "Component.field") to mark'
+    )
+    render.set_defaults(handler=cmd_render)
 
     opt = commands.add_parser(
         "optimize", help="sweep fin height and nose weight, judge every variant"
@@ -212,6 +222,32 @@ def cmd_judge(args: argparse.Namespace) -> int:
     print()
     print(f"  {'PASSED' if report.passed else 'FAILED'}: {counts}")
     return 0 if report.passed else 1
+
+
+def cmd_render(args: argparse.Namespace) -> int:
+    from ogive.server import tools
+    from ogive.sim import openrocket
+
+    try:
+        drawing = tools.render_design(str(args.file), args.assumed)
+    except openrocket.OpenRocketUnavailable as error:
+        raise ValueError(str(error)) from error
+    stem = args.out or Path("out") / "render" / args.file.stem
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    png, svg = stem.with_suffix(".png"), stem.with_suffix(".svg")
+    png.write_bytes(drawing.png)
+    svg.write_text(drawing.svg, encoding="utf-8")
+    r = drawing.record
+    print(f"{args.file}  [{r['provenance']['backend']}]")
+    print(
+        f"  {r['length_mm']} mm long, {r['max_diameter_mm']} mm diameter, "
+        f"launch {r['launch_mass_g']} g, CG {r['cg_mm']} mm, CP {r['cp_mm']} mm, "
+        f"{r['stability_cal']} cal"
+    )
+    if r["assumed"]:
+        print(f"  ASSUMED: {', '.join(r['assumed'])}")
+    print(f"  wrote {png} and {svg}")
+    return 0
 
 
 def cmd_optimize(args: argparse.Namespace) -> int:

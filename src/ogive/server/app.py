@@ -6,21 +6,32 @@ Run: `ogive-mcp`, or `python -m ogive.server`. No API key, no LLM inside Ogive.
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import anyio.to_thread
+from mcp.server.apps import Apps
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import Icon, ToolAnnotations
+from mcp.types import (
+    CallToolResult,
+    EmbeddedResource,
+    Icon,
+    ImageContent,
+    TextContent,
+    TextResourceContents,
+    ToolAnnotations,
+)
 
 from ogive import __version__
 from ogive.judge import load_rules
 from ogive.judge.model import DEFAULT_RULES
 from ogive.server import tools
 from ogive.sim.openrocket import OpenRocketUnavailable
+from ogive.viewer.page import viewer_html, viewer_uri
 
 INSTRUCTIONS = """\
 Ogive drives OpenRocket 24.12 headless: read and edit .ork designs, fly their simulations,
@@ -68,6 +79,77 @@ def refusals() -> Iterator[None]:
         raise ToolError(message) from error
 
 
+# In-chat apps (MCP Apps). Registered before the server: extensions apply at construction.
+# The URI carries the page's hash, so a host's cached copy of an older page is never reused.
+# Results always carry the side view too: hosts without apps show it, and the page falls back
+# to it (with the numbers) for anything it can't draw.
+VIEWER_URI = viewer_uri()
+apps = Apps()
+apps.add_html_resource(
+    VIEWER_URI,
+    viewer_html(),
+    name="ogive-viewer",
+    title="Ogive viewer",
+    description="Interactive 3D view of a design, drawn from OpenRocket's model.",
+    prefers_border=True,
+)
+
+
+@apps.tool(resource_uri=VIEWER_URI, annotations=READ_ONLY, icons=ICONS)
+def view_design(file: str, assumed: list[str] | None = None) -> CallToolResult:
+    """Open the design in an interactive 3D viewer in the chat: rotate and zoom, CG (launch and
+    burnout) and CP markers, exploded internals, colour parts by mass. Every shape, mass and
+    position comes from OpenRocket's model of the file. `assumed`: component names whose values
+    are guesses; they're drawn orange and tagged ASSUMED. Hosts without in-chat apps get the
+    to-scale side view (PNG) and the numbers instead."""
+    with refusals():
+        data, drawing = tools.view_design(file, assumed or ())
+    return viewer_result(data, drawing)
+
+
+@apps.tool(resource_uri=VIEWER_URI, annotations=READ_ONLY, icons=ICONS)
+def view_versions(
+    files: list[str],
+    simulation: str | None = None,
+    seed: int = 0,
+    rules: str | None = None,
+) -> CallToolResult:
+    """Step through versions of a design (2 to 12 .ork files, oldest first) in the 3D viewer: a
+    timeline slider, the version it's compared with drawn as a ghost, changed parts highlighted,
+    and a table of what moved: apogee, max Mach, stability, CG, CP, masses, and the judge's
+    PASS/FAIL. Every version flies the same simulation (by name; default the first file's first)
+    and seed. Also lists every field that changed between versions. Hosts without in-chat apps
+    get the table as text and the last version's side view."""
+    with refusals():
+        data, drawing = tools.view_versions(files, simulation, seed, rules)
+    return viewer_result(data, drawing)
+
+
+@apps.tool(resource_uri=VIEWER_URI, annotations=READ_ONLY, icons=ICONS)
+def replay_flight(file: str, simulation: str | None = None, seed: int = 0) -> CallToolResult:
+    """Replay a simulated flight in 3D in the chat: the design flies OpenRocket's trajectory and
+    attitude over a ground grid. Cameras: overview, chase, fin, nose and a ground tracker. Play,
+    pause, speed and a scrubber with markers for burnout, Mach 1, apogee, deployments and ground
+    hit. A replay of simulation data, not footage. Attitude after the first recovery deployment
+    isn't simulated by OpenRocket and is shown as such. Default simulation: the reference one
+    (if set and present), else the file's first. Hosts without in-chat apps get the events,
+    summary and side view."""
+    with refusals():
+        data, drawing = tools.replay_flight(file, simulation, seed)
+    return viewer_result(data, drawing)
+
+
+def viewer_result(data: dict[str, Any], drawing: tools.Render) -> CallToolResult:
+    """Numbers as text, the side view as an image, the viewer's data as structured content."""
+    return CallToolResult(
+        content=[
+            TextContent(type="text", text=json.dumps(drawing.record, indent=2, default=str)),
+            image_content(drawing.png),
+        ],
+        structured_content=data,
+    )
+
+
 server = MCPServer(
     name="ogive",
     title="Ogive",
@@ -75,6 +157,7 @@ server = MCPServer(
     instructions=INSTRUCTIONS,
     version=__version__,
     icons=ICONS,
+    extensions=[apps],
 )
 
 
@@ -113,26 +196,90 @@ def static_stability(file: str, mach: float = 0.3) -> dict[str, Any]:
 @server.tool(annotations=READ_ONLY, icons=ICONS)
 def judge_design(
     file: str, simulation: str | None = None, seed: int = 0, rules: str | None = None
-) -> dict[str, Any]:
+) -> CallToolResult:
     """Fly a simulation and apply Ogive's judge: stability through the ascent, rod speed, fin
     flutter, ground hit, recovery warnings, motor curve vs designation, stale stored results,
     rocket-equation and mass sanity, confidence. Each verdict has a state (pass/warn/fail/
     pending), the measured value, the limit, its source and its assumptions. `rules` is an
-    optional .toml overriding the default thresholds (read the ogive://rules/default resource)."""
+    optional .toml overriding the default thresholds (read the ogive://rules/default resource).
+    A to-scale side view of the judged design is attached."""
     with refusals():
-        return tools.judge_design(file, simulation, seed, rules)
+        return with_render(tools.judge_design(file, simulation, seed, rules), file)
 
 
 @server.tool(annotations=WRITES_NEW_FILE, icons=ICONS)
 def edit_design(
     file: str, changes: list[dict[str, Any]], output: str | None = None
-) -> dict[str, Any]:
+) -> CallToolResult:
     """Change numeric fields and save the result as a NEW .ork (never overwrites). Each change is
     {"component": NAME, "field": TAG, "value": SI_NUMBER}; field names come from inspect_design.
     All changes apply or none do. Stored sims in the new file are marked outdated.
-    Default output: DESIGN_FOLDER/ogive/STEM-001.ork (next free number)."""
+    Default output: DESIGN_FOLDER/ogive/STEM-001.ork (next free number).
+    A to-scale side view of the NEW design is attached."""
     with refusals():
-        return tools.edit_design(file, changes, output)
+        record = tools.edit_design(file, changes, output)
+        return with_render(record, record["output"])
+
+
+@server.tool(annotations=WRITES_NEW_FILE, icons=ICONS)
+def set_motor(
+    file: str, designation: str, output: str | None = None, delay: float | None = None
+) -> CallToolResult:
+    """Swap the motor, by designation (e.g. "282H399"), for a curve from OpenRocket's motor
+    database, and save a NEW .ork. When several curves share the name, it picks the one whose
+    integrated impulse matches the number in the name (within 5 %); OpenRocket 24.12 ships at
+    least one mislabelled curve. Keeps the ejection delay if the motor allows it (else its
+    longest), lengthens the motor mount if the case doesn't fit, and reloads the file in
+    OpenRocket to prove the digest resolves. A side view of the new design is attached."""
+    with refusals():
+        record = tools.set_motor(file, designation, output, delay)
+        return with_render(record, record["output"])
+
+
+@server.tool(annotations=READ_ONLY, icons=ICONS)
+def render_design(file: str, assumed: list[str] | None = None) -> CallToolResult:
+    """Draw the design to scale, side view, from OpenRocket's model: nose, tube, fins with their
+    real sweep, internal parts and motor at their positions, CG (launch and burnout) and CP,
+    dimensions and masses, and the file's sha256. Returns a PNG to show and the SVG to keep.
+    `assumed`: component names (or "Component.field") whose values are guesses; they're drawn
+    hatched and tagged ASSUMED. "ASSUMED" in a component's comment in OpenRocket works too."""
+    with refusals():
+        drawing = tools.render_design(file, assumed or ())
+    return CallToolResult(
+        content=[
+            image_content(drawing.png),
+            TextContent(type="text", text=json.dumps(drawing.record, indent=2)),
+            EmbeddedResource(
+                type="resource",
+                resource=TextResourceContents(
+                    uri=f"ogive://render/{Path(drawing.record['provenance']['file']).stem}.svg",
+                    mime_type="image/svg+xml",
+                    text=drawing.svg,
+                ),
+            ),
+        ],
+        structured_content=drawing.record,
+    )
+
+
+def image_content(png: bytes) -> ImageContent:
+    return ImageContent(
+        type="image", data=base64.b64encode(png).decode("ascii"), mime_type="image/png"
+    )
+
+
+def with_render(record: dict[str, Any], file: str) -> CallToolResult:
+    """The tool's record as text and structured content, plus the design's side view.
+
+    A failed drawing never fails the tool: the record says why the picture is missing.
+    """
+    content: list[Any] = []
+    try:
+        content.append(image_content(tools.render_design(file).png))
+    except Exception as error:  # noqa: BLE001 - the drawing is an extra, never the result
+        record = {**record, "render": f"not attached: {error}"}
+    content.insert(0, TextContent(type="text", text=json.dumps(record, indent=2, default=str)))
+    return CallToolResult(content=content, structured_content=record)
 
 
 @server.tool(annotations=WRITES_NEW_FILE, icons=ICONS)
